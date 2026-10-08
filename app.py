@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 
 # ตั้งค่าหน้าเว็บรองรับทุกขนาดหน้าจอ
 st.set_page_config(
-    page_title="ร้านฟ้าใสตำนัว",
+    page_title="ฟ้าใสตำนัว",
     page_icon="🌶️",
     layout="wide",
     initial_sidebar_state="collapsed"
@@ -459,7 +459,7 @@ def generate_receipt_html(order_id, table_id, items, total_price, order_time):
         </div>
         
         <div class="text-center">
-            <div style="font-size: 18px; font-weight: bold; color: #c2410c;">🌶️ ร้านฟ้าใสตำนัว</div>
+            <div style="font-size: 18px; font-weight: bold; color: #c2410c;">🌶️ ฟ้าใสตำนัว</div>
             <div style="font-size: 11px; color: #444;">(FAHSAI TUM NUA)</div>
             <div style="font-size: 12px; margin-top: 3px; font-weight: bold;">ใบเสร็จรับเงิน / ใบกำกับภาษีอย่างย่อ</div>
             <div style="font-size: 11px; color: #666;">โทร. 089-999-9999 • ยินดีให้บริการ</div>
@@ -783,17 +783,17 @@ if is_admin_mode:
         logo_html = f'''<div style="text-align: center; margin-bottom: 8px;">
             <img src="data:image/png;base64,{logo_b64}" 
                  style="width: 145px; height: 145px; object-fit: cover; border-radius: 50%; box-shadow: 0 6px 20px rgba(234, 88, 12, 0.32); border: 4px solid #ffedd5; display: inline-block;" 
-                 alt="โลโก้ร้านฟ้าใสตำนัว" />
+                 alt="โลโก้ฟ้าใสตำนัว" />
         </div>'''
     elif os.path.exists(logo_path):
-        logo_html = f'<div style="text-align: center; margin-bottom: 8px;"><img src="{logo_path}" style="width: 145px; height: 145px; object-fit: cover; border-radius: 50%; border: 4px solid #ffedd5; box-shadow: 0 6px 20px rgba(234, 88, 12, 0.32); display: inline-block;" alt="โลโก้ร้านฟ้าใสตำนัว" /></div>'
+        logo_html = f'<div style="text-align: center; margin-bottom: 8px;"><img src="{logo_path}" style="width: 145px; height: 145px; object-fit: cover; border-radius: 50%; border: 4px solid #ffedd5; box-shadow: 0 6px 20px rgba(234, 88, 12, 0.32); display: inline-block;" alt="โลโก้ฟ้าใสตำนัว" /></div>'
     else:
         logo_html = '<div style="text-align: center; font-size: 75px; margin-bottom: 4px;">🌶️</div>'
 
     header_html = f'''
     {logo_html}
     <h1 style="text-align: center; color: #c2410c; font-weight: 800; font-size: 2.3rem; margin: 4px 0 2px 0; line-height: 1.2;">
-        ร้านฟ้าใสตำนัว (ระบบจัดการหลังร้าน)
+        ฟ้าใสตำนัว (ระบบจัดการหลังร้าน)
     </h1>
     <p style="text-align: center; color: #78716c; font-size: 1.05rem; margin: 0 0 14px 0;">
         👨‍🍳 หน้าจอเคาน์เตอร์คิดเงิน • ครัวปรุงอาหาร • รายงานสต็อกวัตถุดิบ
@@ -965,7 +965,7 @@ else:
         logo_html = f'''<div style="text-align: center; margin-bottom: 6px;">
             <img src="data:image/png;base64,{logo_b64}" 
                  style="width: 105px; height: 105px; object-fit: cover; border-radius: 50%; box-shadow: 0 4px 16px rgba(234, 88, 12, 0.28); display: inline-block; border: 3px solid #ffedd5;" 
-                 alt="โลโก้ร้านฟ้าใสตำนัว" />
+                 alt="โลโก้ฟ้าใสตำนัว" />
         </div>'''
     else:
         logo_html = '<div style="text-align: center; font-size: 55px; margin-bottom: 4px;">🌶️</div>'
@@ -973,7 +973,7 @@ else:
     header_html = f'''
     {logo_html}
     <h1 style="text-align: center; color: #c2410c; font-weight: 800; font-size: 2.25rem; margin: 2px 0 0 0; letter-spacing: -0.5px; line-height: 1.2;">
-        ร้านฟ้าใสตำนัว
+        ฟ้าใสตำนัว
     </h1>
     <p style="text-align: center; color: #78716c; font-size: 0.95rem; margin: 0 0 10px 0;">
         ส้มตำ ยำ ลาบ ย่าง แซ่บนัว สดใหม่ทุกครก 🌶️
@@ -1139,7 +1139,7 @@ else:
                 'accepted': ('🍳 ครัวกำลังปรุงอาหาร', 'blue', 0.50, 'แม่ครัวกำลังตั้งกระทะ ปรุงสดใหม่ค่ะ'),
                 'cooked': ('🍲 ปรุงเสร็จ กำลังทยอยเสิร์ฟ', 'purple', 0.75, 'อาหารปรุงเสร็จแล้ว พนักงานกำลังยกไปเสิร์ฟค่ะ'),
                 'served': ('🍽️ เสิร์ฟถึงโต๊ะครบแล้ว', 'green', 1.0, 'เสิร์ฟครบทุกเมนูแล้ว ทานให้อร่อยแซ่บนัวนะคะ!'),
-                'paid': ('✅ เช็คบิลเรียบร้อยแล้ว', 'gray', 1.0, 'ขอบคุณที่มาอุดหนุนร้านฟ้าใสตำนัวนะคะ 🙏')
+                'paid': ('✅ เช็คบิลเรียบร้อยแล้ว', 'gray', 1.0, 'ขอบคุณที่มาอุดหนุนฟ้าใสตำนัวนะคะ 🙏')
             }
             for oid, status, total, otime in cur_orders:
                 c_trk.execute("SELECT item_name, quantity, note, COALESCE(status, 'pending') FROM order_items WHERE order_id = ?", (oid,))
