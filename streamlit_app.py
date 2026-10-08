@@ -645,9 +645,10 @@ def render_pos_dashboard():
                     st.caption(f"เวลาสั่ง: {otime}")
                     
                     c.execute("""
-                        SELECT id, item_name, quantity, note, price, COALESCE(status, 'pending')
-                        FROM order_items 
-                        WHERE order_id = ?
+                        SELECT oi.id, oi.item_name, oi.quantity, oi.note, oi.price, COALESCE(oi.status, 'pending'), mi.image
+                        FROM order_items oi
+                        LEFT JOIN menu_items mi ON oi.item_name = mi.name
+                        WHERE oi.order_id = ?
                     """, (oid,))
                     items_in_order = c.fetchall()
                     
@@ -657,20 +658,26 @@ def render_pos_dashboard():
                     all_items_served = (total_items > 0) and (served_items == total_items)
                     
                     st.markdown("**📋 รายการอาหารในบิล:**")
-                    for oi_id, iname, iqty, inote, iprice, istatus in items_in_order:
+                    for oi_id, iname, iqty, inote, iprice, istatus, dish_img in items_in_order:
                         with st.container(border=True):
-                            it_h1, it_h2 = st.columns([2.6, 1.4])
-                            with it_h1:
+                            it_c1, it_c2 = st.columns([1.1, 2.3])
+                            with it_c1:
+                                if dish_img:
+                                    st.image(dish_img, use_container_width=True)
+                                else:
+                                    st.markdown("<div style='font-size: 2.2rem; text-align: center; line-height: 60px;'>🍲</div>", unsafe_allow_html=True)
+                            with it_c2:
                                 st.markdown(f"**{iname}** <span style='color: #ea580c; font-weight: bold;'>x{iqty}</span>", unsafe_allow_html=True)
+                                st.caption(f"฿{int(iprice * iqty):,}")
                                 if inote:
                                     st.caption(f"⚠️ {inote}")
-                            with it_h2:
+                                
                                 if istatus == 'pending':
-                                    st.markdown("<div style='text-align: right;'><span style='background: #fff7ed; color: #c2410c; padding: 2px 6px; border-radius: 4px; font-size: 0.8rem; font-weight: bold; border: 1px solid #fdba74;'>⏳ กำลังปรุง</span></div>", unsafe_allow_html=True)
+                                    st.markdown("<span style='background: #fff7ed; color: #c2410c; padding: 2px 6px; border-radius: 4px; font-size: 0.8rem; font-weight: bold; border: 1px solid #fdba74;'>⏳ กำลังปรุง</span>", unsafe_allow_html=True)
                                 elif istatus == 'cooked':
-                                    st.markdown("<div style='text-align: right;'><span style='background: #f3e8ff; color: #7e22ce; padding: 2px 6px; border-radius: 4px; font-size: 0.8rem; font-weight: bold; border: 1px solid #d8b4fe;'>🍳 เสร็จแล้ว</span></div>", unsafe_allow_html=True)
+                                    st.markdown("<span style='background: #f3e8ff; color: #7e22ce; padding: 2px 6px; border-radius: 4px; font-size: 0.8rem; font-weight: bold; border: 1px solid #d8b4fe;'>🍳 เสร็จแล้ว</span>", unsafe_allow_html=True)
                                 elif istatus == 'served':
-                                    st.markdown("<div style='text-align: right;'><span style='background: #f0fdf4; color: #15803d; padding: 2px 6px; border-radius: 4px; font-size: 0.8rem; font-weight: bold; border: 1px solid #86efac;'>✅ เสิร์ฟแล้ว</span></div>", unsafe_allow_html=True)
+                                    st.markdown("<span style='background: #f0fdf4; color: #15803d; padding: 2px 6px; border-radius: 4px; font-size: 0.8rem; font-weight: bold; border: 1px solid #86efac;'>✅ เสิร์ฟแล้ว</span>", unsafe_allow_html=True)
                             
                             # ปุ่มเปลี่ยนสถานะแต่ละเมนู: เสร็จแล้ว / นำเสิร์ฟแล้ว
                             act_c1, act_c2 = st.columns(2)
@@ -770,16 +777,29 @@ def render_pos_dashboard():
 # 🔴 ฝั่งร้านค้า (เคาน์เตอร์ & ครัว & รายงาน) -> https://.../?mode=admin
 # ==============================================================================
 if is_admin_mode:
-    # Header ปรับขนาดอัตโนมัติตามหน้าจอ
-    head_c1, head_c2 = st.columns([1, 6])
-    with head_c1:
-        if os.path.exists(logo_path):
-            st.image(logo_path, width=75)
-        else:
-            st.title("🌶️")
-    with head_c2:
-        st.markdown("<h2 style='color: #c2410c; margin: 0;'>ร้านฟ้าใสตำนัว (ระบบจัดการหลังร้าน)</h2>", unsafe_allow_html=True)
-        st.caption("👨‍🍳 หน้าจอเคาน์เตอร์คิดเงิน • ครัวปรุงอาหาร • รายงานสต็อกวัตถุดิบ")
+    # Header ปรับขนาดภาพโลโก้ให้ใหญ่ขึ้น สวยงาม คมชัด จัดกลางอย่างลงตัว
+    logo_b64 = get_base64_image(logo_path)
+    if logo_b64:
+        logo_html = f'''<div style="text-align: center; margin-bottom: 8px;">
+            <img src="data:image/png;base64,{logo_b64}" 
+                 style="width: 145px; height: 145px; object-fit: cover; border-radius: 50%; box-shadow: 0 6px 20px rgba(234, 88, 12, 0.32); border: 4px solid #ffedd5; display: inline-block;" 
+                 alt="โลโก้ร้านฟ้าใสตำนัว" />
+        </div>'''
+    elif os.path.exists(logo_path):
+        logo_html = f'<div style="text-align: center; margin-bottom: 8px;"><img src="{logo_path}" style="width: 145px; height: 145px; object-fit: cover; border-radius: 50%; border: 4px solid #ffedd5; box-shadow: 0 6px 20px rgba(234, 88, 12, 0.32); display: inline-block;" alt="โลโก้ร้านฟ้าใสตำนัว" /></div>'
+    else:
+        logo_html = '<div style="text-align: center; font-size: 75px; margin-bottom: 4px;">🌶️</div>'
+
+    header_html = f'''
+    {logo_html}
+    <h1 style="text-align: center; color: #c2410c; font-weight: 800; font-size: 2.3rem; margin: 4px 0 2px 0; line-height: 1.2;">
+        ร้านฟ้าใสตำนัว (ระบบจัดการหลังร้าน)
+    </h1>
+    <p style="text-align: center; color: #78716c; font-size: 1.05rem; margin: 0 0 14px 0;">
+        👨‍🍳 หน้าจอเคาน์เตอร์คิดเงิน • ครัวปรุงอาหาร • รายงานสต็อกวัตถุดิบ
+    </p>
+    '''
+    st.markdown(header_html, unsafe_allow_html=True)
 
     st.write("---")
 
