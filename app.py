@@ -17,9 +17,35 @@ st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600;700&display=swap');
 
-/* บังคับใช้ฟอนต์ Prompt ทั้งระบบ */
-html, body, [class*="css"], .stMarkdown, p, span, button, input {
+/* บังคับใช้ฟอนต์ Prompt โดยไม่ทับไอคอน Material Symbols ของ Streamlit */
+html, body, p, input, select, textarea {
     font-family: 'Prompt', sans-serif !important;
+}
+
+.stMarkdown, .stButton > button {
+    font-family: 'Prompt', sans-serif !important;
+}
+
+/* คืนค่าฟอนต์ไอคอน Material Symbols เพื่อไม่ให้กลายเป็นตัวหนังสือคำว่า expand_less ทับบนปุ่ม */
+[data-testid="stIconMaterial"], 
+[class*="material-symbols"], 
+[class*="material-icons"] {
+    font-family: 'Material Symbols Rounded', 'Material Icons' !important;
+    font-style: normal !important;
+}
+
+/* ซ่อนไอคอนลูกศร expand_less/expand_more ในปุ่ม popover ไม่ให้บังข้อความ */
+div[data-testid="stPopover"] > button [data-testid="stIconMaterial"] {
+    display: none !important;
+}
+
+div[data-testid="stPopover"] > button {
+    font-family: 'Prompt', sans-serif !important;
+    display: flex !important;
+    justify-content: center !important;
+    align-items: center !important;
+    min-height: 44px !important;
+    font-weight: 600 !important;
 }
 
 /* ปรับระยะขอบหน้าจอให้พอดีกับมือถือ */
@@ -457,13 +483,11 @@ else:
     total_cart_qty = sum(item['qty'] for item in st.session_state.cart.values())
     total_cart_sum = sum(item['price'] * item['qty'] for item in st.session_state.cart.values())
 
-    # แถบตะกร้าลอยด้านบน/ข้าง เพื่อให้ลูกค้าบนมือถือไม่ต้องเลื่อนหา
+    # แถบตะกร้าอาหาร เพื่อให้ลูกค้าสั่งและแก้ไขรายการได้สะดวก
     if total_cart_qty > 0:
         with st.container(border=True):
-            b_c1, b_c2 = st.columns([3, 2])
-            b_c1.markdown(f"🛒 **ในตะกร้า:** {total_cart_qty} รายการ | รวม **฿{int(total_cart_sum)}**")
-            with b_c2:
-                with st.popover("👀 ดูตะกร้า & ยืนยันสั่ง", use_container_width=True):
+            st.markdown(f"<div style='text-align: center; font-size: 1.15rem; font-weight: 700; color: #1c1917; margin-bottom: 8px;'>🛒 ในตะกร้า: <span style='color: #ea580c;'>{total_cart_qty} รายการ</span> | รวม <span style='color: #ea580c;'>฿{int(total_cart_sum):,}</span></div>", unsafe_allow_html=True)
+            with st.popover("👀 ดูตะกร้า & ยืนยันสั่งอาหาร", use_container_width=True):
                     st.markdown(f"### 🛒 ตะกร้าอาหาร (โต๊ะ {current_table_num})")
                     for item_name, data in list(st.session_state.cart.items()):
                         subtotal = data['price'] * data['qty']
