@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ร้านฟ้าใสตำนัว - รายงานการขาย & วางแผนเตรียมอาหาร</title>
+    <!-- Favicon -->
+    <link rel="icon" type="image/png" href="/img/logo.png">
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Google Font: Prompt -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <!-- FontAwesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body { font-family: 'Prompt', sans-serif; }
+        @media print {
+            .no-print { display: none !important; }
+            body { background: white; color: black; }
+            .print-break { page-break-before: always; }
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 min-h-screen pb-16">
+
+    <!-- Top Header -->
+    <header class="bg-white border-b border-slate-200 sticky top-0 z-40 shadow-xs no-print">
+        <div class="max-w-7xl mx-auto px-4 py-2.5 flex flex-wrap items-center justify-between gap-4">
+            <div class="flex items-center space-x-3">
+                <a href="/" class="block">
+                    <img src="/img/logo.png" alt="ฟ้าใสตำนัว Logo" class="w-11 h-11 rounded-full object-cover border-2 border-orange-500 shadow-sm hover:scale-105 transition">
+                </a>
+                <div>
+                    <h1 class="text-base font-bold text-slate-800">ร้านฟ้าใสตำนัว • รายงานการขาย & วางแผนเตรียมของ</h1>
+                    <p class="text-xs text-slate-500">Food Prep Analytics & Daily Sales Performance</p>
+                </div>
+            </div>
+
+            <!-- Quick Navigation & Export -->
+            <div class="flex items-center space-x-2">
+                <button onclick="window.print()" class="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold flex items-center space-x-1.5 transition border border-slate-200">
+                    <i class="fa-solid fa-print"></i>
+                    <span>พิมพ์รายงาน</span>
+                </button>
+                <button onclick="exportCSV()" class="px-3.5 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-xl text-xs font-semibold flex items-center space-x-1.5 transition border border-emerald-200">
+                    <i class="fa-solid fa-file-csv"></i>
+                    <span>Export CSV</span>
+                </button>
+                <a href="/counter" class="px-3.5 py-2 bg-slate-800 hover:bg-slate-900 text-white rounded-xl text-xs font-semibold flex items-center space-x-1.5 transition">
+                    <i class="fa-solid fa-desktop"></i>
+                    <span>หน้าจอเคาน์เตอร์</span>
+                </a>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Container -->
+    <main class="max-w-7xl mx-auto px-4 py-6">
+        
+        <!-- Filter Bar -->
+        <div class="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs mb-6 flex flex-wrap items-center justify-between gap-4 no-print">
+            <div class="flex items-center space-x-3">
+                <label for="date-input" class="text-xs font-bold text-slate-700 flex items-center space-x-1.5">
+                    <i class="fa-regular fa-calendar-days text-orange-500"></i>
+                    <span>เลือกวันที่รายงาน:</span>
+                </label>
+                <input type="date" id="date-input" value="{{ today }}" onchange="loadReport()" class="px-3 py-1.5 text-xs border border-slate-300 rounded-xl font-medium focus:ring-2 focus:ring-orange-500 focus:outline-none bg-slate-50">
+            </div>
+
+            <!-- Quick Date Pills -->
+            <div class="flex space-x-2 text-xs">
+                <button onclick="setDateOffset(0)" class="px-3 py-1.5 rounded-lg font-medium bg-orange-100 text-orange-700 hover:bg-orange-200 transition">วันนี้</button>
+                <button onclick="setDateOffset(1)" class="px-3 py-1.5 rounded-lg font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 transition">เมื่อวาน</button>
+                <button onclick="setDateOffset(2)" class="px-3 py-1.5 rounded-lg font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 transition">2 วันก่อน</button>
+            </div>
+        </div>
+
+        <!-- Section 1: KPI Summary Cards -->
+        <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+            <!-- KPI 1: Revenue -->
+            <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
+                <div class="flex justify-between items-start">
+                    <div>
+                        <p class="text-xs text-slate-500 font-medium">ยอดขายรวมสุทธิ</p>
+                        <h3 class="text-2xl font-bold text-slate-800 mt-1" id="kpi-revenue">฿0</h3>
+                    </div>
+                    <div class="w-10 h-10 rounded-xl bg-orange-50 text-orange-600 flex items-center justify-center text-lg">
+                        <i class="fa-solid fa-baht-sign"></i>
+                    </div>
+                </div>
+                <div class="mt-2 text-[11px] text-slate-400">คำนวณจากบิลที่ชำระเงินแล้ว</div>
+            </div>
+
+            <!-- KPI 2: Gross Profit -->
+            <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
+                <div class="flex justify-between items-start">
+                    <div>
+                        <p class="text-xs text-slate-500 font-medium">กำไรขั้นต้น (Gross Profit)</p>
+                        <h3 class="text-2xl font-bold text-emerald-600 mt-1" id="kpi-profit">฿0</h3>
+                    </div>
+                    <div class="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center text-lg">
+                        <i class="fa-solid fa-chart-line"></i>
+                    </div>
+                </div>
+                <div class="mt-2 text-[11px] text-emerald-700 font-medium" id="kpi-margin">อัตรากำไร: 0%</div>
+            </div>
+
+            <!-- KPI 3: Orders Count -->
+            <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
+                <div class="flex justify-between items-start">
+                    <div>
+                        <p class="text-xs text-slate-500 font-medium">จำนวนบิล/ออเดอร์</p>
+                        <h3 class="text-2xl font-bold text-blue-600 mt-1" id="kpi-orders">0</h3>
+                    </div>
+                    <div class="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center text-lg">
+                        <i class="fa-solid fa-receipt"></i>
+                    </div>
+                </div>
+                <div class="mt-2 text-[11px] text-slate-400" id="kpi-items-count">รายการที่ขายได้: 0 จาน</div>
+            </div>
+
+            <!-- KPI 4: Avg Ticket -->
+            <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
+                <div class="flex justify-between items-start">
+                    <div>
+                        <p class="text-xs text-slate-500 font-medium">ยอดเฉลี่ยต่อบิล (Avg Ticket)</p>
+                        <h3 class="text-2xl font-bold text-purple-600 mt-1" id="kpi-avg-ticket">฿0</h3>
+                    </div>
+                    <div class="w-10 h-10 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center text-lg">
+                        <i class="fa-solid fa-basket-shopping"></i>
+                    </div>
+                </div>
+                <div class="mt-2 text-[11px] text-slate-400">ยอดใช้จ่ายเฉลี่ยต่อโต๊ะ/บิล</div>
+            </div>
+        </div>
+
+        <!-- Section 2: Charts (Peak Hours & 7-Day Trend) -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+            <!-- Hourly Sales Chart -->
+            <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
+                <div class="flex items-center justify-between mb-4">
+                    <div>
+                        <h4 class="font-bold text-slate-800 text-sm">ช่วงเวลายอดขายหนาแน่น (Hourly Peak Hours)</h4>
+                        <p class="text-[11px] text-slate-400">ใช้จัดกะพนักงานและเตรียมเตา/หน้ากระทะล่วงหน้า</p>
+                    </div>
+                    <span class="text-xs bg-slate-100 text-slate-600 px-2.5 py-1 rounded-lg font-medium">
+                        <i class="fa-solid fa-fire text-orange-500 mr-1"></i> Peak Rush
+                    </span>
+                </div>
+                <div class="h-64">
+                    <canvas id="hourlyChart"></canvas>
+                </div>
+            </div>
+
+            <!-- 7-Day Trend Chart -->
+            <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
+                <div class="flex items-center justify-between mb-4">
+                    <div>
+                        <h4 class="font-bold text-slate-800 text-sm">แนวโน้มยอดขายย้อนหลัง 7 วัน (7-Day Trend)</h4>
+                        <p class="text-[11px] text-slate-400">เปรียบเทียบยอดขายเพื่อประเมินความต้องการล่วงหน้า</p>
+                    </div>
+                    <span class="text-xs bg-emerald-100 text-emerald-700 px-2.5 py-1 rounded-lg font-medium">
+                        <i class="fa-solid fa-chart-simple mr-1"></i> Trend Analysis
+                    </span>
+                </div>
+                <div class="h-64">
+                    <canvas id="trendChart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Section 3: FOOD PREP PLANNER (หัวใจสำคัญของการวางแผนเตรียมอาหาร) -->
+        <div class="bg-white rounded-2xl border border-slate-200 shadow-xs p-5 mb-6">
+            <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between pb-4 border-b border-slate-100 gap-3">
+                <div class="flex items-center space-x-3">
+                    <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-amber-500 to-orange-500 text-white flex items-center justify-center text-xl shadow-xs">
+                        🍲
+                    </div>
+                    <div>
+                        <h3 class="text-base font-bold text-slate-800 flex items-center gap-2">
+                            <span>ตารางวางแผนเตรียมวัตถุดิบอาหารล่วงหน้า (Food Prep Planner)</span>
+                            <span class="text-[11px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-300 font-semibold">แนะนำสต็อก +15%</span>
+                        </h3>
+                        <p class="text-xs text-slate-500">ระบบคำนวณปริมาณวัตถุดิบที่ใช้จริงจากออเดอร์ เพื่อแนะนำให้เชฟและทีมครัวเตรียมหั่น/หมัก/ต้มล่วงหน้าสำหรับวันถัดไป</p>
+                    </div>
+                </div>
+
+                <button onclick="window.print()" class="no-print text-xs bg-orange-600 hover:bg-orange-700 text-white font-semibold px-4 py-2 rounded-xl transition flex items-center gap-1.5 shadow-xs">
+                    <i class="fa-solid fa-print"></i> พิมพ์ใบเตรียมวัตถุดิบให้ครัว
+                </button>
+            </div>
+
+            <div class="overflow-x-auto mt-4">
+                <table class="w-full text-left text-xs text-slate-700">
+                    <thead class="bg-slate-50 text-slate-500 uppercase text-[10px] tracking-wider border-b border-slate-200">
+                        <tr>
+                            <th class="py-3 px-4">รายการวัตถุดิบ</th>
+                            <th class="py-3 px-4">หน่วย</th>
+                            <th class="py-3 px-4 text-right">ปริมาณที่ใช้จริงวันนี้</th>
+                            <th class="py-3 px-4 text-right bg-amber-50 text-amber-900 font-bold">แนะนำเตรียมล่วงหน้า (+15%)</th>
+                            <th class="py-3 px-4 text-center">คำแนะนำขั้นตอนการเตรียม</th>
+                        </tr>
+                    </thead>
+                    <tbody id="prep-table-body" class="divide-y divide-slate-100 font-medium">
+                        <tr>
+                            <td colspan="5" class="text-center py-8 text-slate-400">กำลังคำนวณข้อมูลวัตถุดิบ...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Section 4: Best Sellers Leaderboard -->
+        <div class="bg-white rounded-2xl border border-slate-200 shadow-xs p-5 mb-6">
+            <div class="flex items-center justify-between pb-4 border-b border-slate-100 mb-4">
+                <div class="flex items-center space-x-2">
+                    <i class="fa-solid fa-trophy text-amber-500 text-lg"></i>
+                    <h3 class="text-base font-bold text-slate-800">อันดับเมนูขายดีประจำวัน (Top Selling Menu Items)</h3>
+                </div>
+                <span class="text-xs text-slate-400" id="top-items-count">0 เมนู</span>
+            </div>
+
+            <div class="overflow-x-auto">
+                <table class="w-full text-left text-xs text-slate-700">
+                    <thead class="bg-slate-50 text-slate-500 uppercase text-[10px] tracking-wider border-b border-slate-200">
+                        <tr>
+                            <th class="py-3 px-4">อันดับ</th>
+                            <th class="py-3 px-4">ชื่อเมนู</th>
+                            <th class="py-3 px-4">หมวดหมู่</th>
+                            <th class="py-3 px-4 text-right">จำนวนที่ขายได้ (จาน)</th>
+                            <th class="py-3 px-4 text-right">ยอดขายรวม (บาท)</th>
+                            <th class="py-3 px-4 text-right">กำไรขั้นต้น (บาท)</th>
+                        </tr>
+                    </thead>
+                    <tbody id="top-items-body" class="divide-y divide-slate-100">
+                        <!-- Injected via JS -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+    </main>
+
+    <!-- Footer -->
+    <footer class="mt-8 text-center text-xs text-slate-400 no-print">
+        ระบบฐานข้อมูลและการจัดการร้านอาหาร • พัฒนาด้วย Python Flask & SQLite
+    </footer>
+
+    <!-- JavaScript Data Logic & Charts -->
+    <script>
+        let hourlyChartInstance = null;
+        let trendChartInstance = null;
+
+        function setDateOffset(daysAgo) {
+            const d = new Date();
+            d.setDate(d.getDate() - daysAgo);
+            const dateStr = d.toISOString().split('T')[0];
+            document.getElementById('date-input').value = dateStr;
+            loadReport();
+        }
+
+        async function loadReport() {
+            const date = document.getElementById('date-input').value;
+            try {
+                const res = await fetch(`/api/reports/daily?date=${date}`);
+                const data = await res.json();
+                
+                // 1. Update KPIs
+                document.getElementById('kpi-revenue').innerText = `฿${data.summary.total_revenue.toLocaleString()}`;
+                document.getElementById('kpi-profit').innerText = `฿${data.summary.gross_profit.toLocaleString()}`;
+                document.getElementById('kpi-margin').innerText = `อัตรากำไรขั้นต้น: ${data.summary.margin_percent}%`;
+                document.getElementById('kpi-orders').innerText = data.summary.order_count;
+                document.getElementById('kpi-avg-ticket').innerText = `฿${data.summary.avg_ticket.toLocaleString()}`;
+
+                // Total items sold count
+                const totalDishes = data.top_items.reduce((sum, it) => sum + it.total_qty, 0);
+                document.getElementById('kpi-items-count').innerText = `รายการที่ขายได้: ${totalDishes} จาน`;
+
+                // 2. Render Charts
+                renderHourlyChart(data.hourly);
+                renderTrendChart(data.trend_7_days);
+
+                // 3. Render Food Prep Planner Table
+                renderPrepTable(data.prep_plan);
+
+                // 4. Render Best Sellers Table
+                renderTopItemsTable(data.top_items);
+
+            } catch (err) {
+                console.error("Error loading report:", err);
+            }
+        }
+
+        function renderPrepTable(items) {
+            const tbody = document.getElementById('prep-table-body');
+            if (!items || items.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="5" class="text-center py-8 text-slate-400">ไม่มีข้อมูลการใช้วัตถุดิบในวันที่เลือก</td></tr>`;
+                return;
+            }
+
+            // Prep guidelines helper
+            function getGuideline(name) {
+                if (name.includes('วากิว') || name.includes('เนื้อ') || name.includes('หมู')) return '🥩 ชั่งน้ำหนักแบ่งเป็น Portion แช่เย็นเตรียมผัด';
+                if (name.includes('กุ้ง') || name.includes('ปู')) return '🦐 ล้างทำความสะอาด แกะเปลือก/ดึงเส้นดำ พักน้ำแข็ง';
+                if (name.includes('ข้าวสวย')) return '🍚 เตรียมซาวข้าวและหุงข้าวสวยหอมมะลิล่วงหน้า 30 นาที';
+                if (name.includes('ไข่')) return '🥚 ล้างเปลือก แยกใส่ถาดสำหรับทอด/ผัด';
+                if (name.includes('กะเพรา') || name.includes('สมุนไพร') || name.includes('ผัก')) return '🌿 เด็ดใบ ล้างสะเด็ดน้ำ บรรจุกล่องเก็บความสด';
+                if (name.includes('ชา') || name.includes('นม') || name.includes('น้ำ')) return '🧋 สกัดชา/ตวงส่วนผสมเบสเครื่องดื่มแช่เย็น';
+                return '🥣 ตรวจเช็กสต็อกและจัดเตรียมตามสูตรมาตรฐาน';
+            }
+
+            let html = '';
+            items.forEach((item, idx) => {
+                const guideline = getGuideline(item.ingredient_name);
+                html += `
+                    <tr class="hover:bg-slate-50 transition">
+                        <td class="py-3 px-4 font-bold text-slate-800">
+                            ${idx + 1}. ${item.ingredient_name}
+                        </td>
+                        <td class="py-3 px-4 text-slate-500">${item.unit}</td>
+                        <td class="py-3 px-4 text-right font-semibold text-slate-700">${item.consumed_today.toLocaleString()}</td>
+                        <td class="py-3 px-4 text-right bg-amber-50/70 font-bold text-orange-600 text-sm">
+                            ${item.recommended_prep_next_day.toLocaleString()} ${item.unit}
+                        </td>
+                        <td class="py-3 px-4 text-center">
+                            <span class="inline-block px-2.5 py-1 rounded-lg text-[11px] bg-slate-100 text-slate-600 border border-slate-200">
+                                ${guideline}
+                            </span>
+                        </td>
+                    </tr>
+                `;
+            });
+            tbody.innerHTML = html;
+        }
+
+        function renderTopItemsTable(items) {
+            const tbody = document.getElementById('top-items-body');
+            document.getElementById('top-items-count').innerText = `${items.length} รายการ`;
+            
+            if (!items || items.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="6" class="text-center py-8 text-slate-400">ยังไม่มีข้อมูลเมนูที่ขายในวันที่เลือก</td></tr>`;
+                return;
+            }
+
+            let html = '';
+            items.forEach((it, index) => {
+                const badge = index === 0 ? '🥇' : (index === 1 ? '🥈' : (index === 2 ? '🥉' : `${index + 1}`));
+                html += `
+                    <tr class="hover:bg-slate-50 transition">
+                        <td class="py-3 px-4 font-bold text-center w-12">${badge}</td>
+                        <td class="py-3 px-4 font-bold text-slate-800">${it.item_name}</td>
+                        <td class="py-3 px-4 text-slate-500">${it.category || 'ทั่วไป'}</td>
+                        <td class="py-3 px-4 text-right font-bold text-orange-600 text-sm">${it.total_qty}</td>
+                        <td class="py-3 px-4 text-right font-medium">฿${it.item_revenue.toLocaleString()}</td>
+                        <td class="py-3 px-4 text-right font-semibold text-emerald-600">฿${it.item_profit.toLocaleString()}</td>
+                    </tr>
+                `;
+            });
+            tbody.innerHTML = html;
+        }
+
+        function renderHourlyChart(hourly) {
+            const ctx = document.getElementById('hourlyChart').getContext('2d');
+            if (hourlyChartInstance) hourlyChartInstance.destroy();
+
+            hourlyChartInstance = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: hourly.labels,
+                    datasets: [
+                        {
+                            label: 'ยอดขาย (บาท)',
+                            data: hourly.revenues,
+                            backgroundColor: 'rgba(234, 88, 12, 0.75)',
+                            borderColor: 'rgb(234, 88, 12)',
+                            borderWidth: 1,
+                            borderRadius: 6,
+                            yAxisID: 'y'
+                        },
+                        {
+                            label: 'จำนวนออเดอร์',
+                            data: hourly.orders,
+                            type: 'line',
+                            borderColor: 'rgb(37, 99, 235)',
+                            backgroundColor: 'rgb(37, 99, 235)',
+                            tension: 0.3,
+                            yAxisID: 'y1'
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            position: 'left',
+                            ticks: { callback: v => '฿' + v }
+                        },
+                        y1: {
+                            beginAtZero: true,
+                            position: 'right',
+                            grid: { drawOnChartArea: false }
+                        }
+                    }
+                }
+            });
+        }
+
+        function renderTrendChart(trends) {
+            const ctx = document.getElementById('trendChart').getContext('2d');
+            if (trendChartInstance) trendChartInstance.destroy();
+
+            const labels = trends.map(t => t.date.substring(5)); // MM-DD
+            const revenues = trends.map(t => t.revenue);
+
+            trendChartInstance = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'ยอดขายรายวัน (บาท)',
+                        data: revenues,
+                        borderColor: 'rgb(16, 185, 129)',
+                        backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                        fill: true,
+                        tension: 0.4,
+                        pointRadius: 4,
+                        pointBackgroundColor: 'rgb(16, 185, 129)'
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            ticks: { callback: v => '฿' + v }
+                        }
+                    }
+                }
+            });
+        }
+
+        function exportCSV() {
+            const date = document.getElementById('date-input').value;
+            window.location.href = `/api/reports/export/csv?date=${date}`;
+        }
+
+        // Initialize on load
+        loadReport();
+    </script>
+</body>
+</html>

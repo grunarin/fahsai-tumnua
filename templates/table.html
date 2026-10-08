@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ร้านฟ้าใสตำนัว - สั่งอาหาร โต๊ะ {{ table_id }}</title>
+    <!-- Favicon -->
+    <link rel="icon" type="image/png" href="/img/logo.png">
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Google Fonts: Prompt -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <!-- FontAwesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        body { font-family: 'Prompt', sans-serif; -webkit-tap-highlight-color: transparent; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    </style>
+</head>
+<body class="bg-slate-100 text-slate-800 pb-28">
+
+    <!-- Sticky Header -->
+    <header class="bg-white/95 backdrop-blur-md border-b border-slate-200 sticky top-0 z-40 px-4 py-2.5 shadow-xs">
+        <div class="max-w-lg mx-auto flex items-center justify-between">
+            <div class="flex items-center space-x-2.5">
+                <img src="/img/logo.png" alt="ฟ้าใสตำนัว Logo" class="w-10 h-10 rounded-full object-cover border-2 border-orange-500 shadow-sm flex-shrink-0">
+                <div>
+                    <h1 class="text-sm font-bold text-slate-800 leading-tight flex items-center gap-1">
+                        <span>ร้านฟ้าใสตำนัว</span>
+                        <span class="text-[10px] px-1.5 py-0.2 bg-red-100 text-red-600 rounded-md font-semibold">แซ่บนัว</span>
+                    </h1>
+                    <span class="inline-flex items-center text-[11px] text-emerald-600 font-medium">
+                        <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse mr-1"></span>
+                        โต๊ะที่ {{ table_id }} (กำลังนั่งทาน)
+                    </span>
+                </div>
+            </div>
+
+            <!-- View Orders History Button -->
+            <button onclick="openOrdersModal()" class="relative px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold flex items-center space-x-1.5 transition border border-slate-200 shadow-xs">
+                <i class="fa-solid fa-receipt text-orange-500"></i>
+                <span>สถานะอาหาร</span>
+                <span id="active-orders-badge" class="hidden absolute -top-1.5 -right-1.5 bg-red-600 text-white text-[10px] w-4 h-4 rounded-full flex items-center justify-center font-bold">0</span>
+            </button>
+        </div>
+    </header>
+
+    <!-- Main Container -->
+    <main class="max-w-lg mx-auto px-4 pt-3">
+        
+        <!-- Welcome Hero Banner with Mascot Logo -->
+        <div class="relative overflow-hidden bg-gradient-to-r from-red-600 via-orange-500 to-amber-500 rounded-3xl p-4.5 text-white shadow-lg mb-4">
+            <div class="relative z-10 flex items-center justify-between gap-3">
+                <div class="space-y-1">
+                    <span class="inline-block px-2.5 py-0.5 bg-white/20 backdrop-blur-sm rounded-full text-[10px] font-semibold text-amber-100">
+                        🌶️ ยินดีต้อนรับสู่ โต๊ะที่ {{ table_id }}
+                    </span>
+                    <h2 class="text-xl font-extrabold tracking-tight leading-tight drop-shadow-xs">ร้านฟ้าใสตำนัว</h2>
+                    <p class="text-xs text-amber-100 leading-relaxed font-light">
+                        ส้มตำ ยำ ลาบ ย่าง ต้มแซ่บ สดใหม่ทุกครก สั่งตรงเข้าครัวได้เลยค่ะ!
+                    </p>
+                </div>
+                <!-- Mascot Image -->
+                <div class="relative flex-shrink-0">
+                    <img src="/img/logo.png" alt="น้องฟ้าใส" class="w-24 h-24 object-contain drop-shadow-xl hover:scale-105 transition transform duration-300">
+                </div>
+            </div>
+            <!-- Decorative circle glow -->
+            <div class="absolute -right-6 -bottom-6 w-32 h-32 bg-white/10 rounded-full blur-xl pointer-events-none"></div>
+        </div>
+
+        <!-- Category Pills (Horizontal Scroll) -->
+        <div class="flex space-x-2 overflow-x-auto no-scrollbar py-2 mb-3">
+            <button onclick="filterCategory('all')" class="cat-btn active-cat px-4 py-1.5 rounded-full text-xs font-medium bg-orange-600 text-white shadow-sm whitespace-nowrap transition" data-cat="all">
+                ทั้งหมด
+            </button>
+            {% for cat in categories %}
+            <button onclick="filterCategory('{{ cat }}')" class="cat-btn px-4 py-1.5 rounded-full text-xs font-medium bg-white text-slate-600 border border-slate-200 whitespace-nowrap hover:bg-slate-50 transition" data-cat="{{ cat }}">
+                {{ cat }}
+            </button>
+            {% endfor %}
+        </div>
+
+        <!-- Food Menu Grid -->
+        <div class="space-y-3" id="menu-container">
+            {% for item in menu_items %}
+            <div class="menu-item bg-white rounded-2xl p-3 shadow-xs border border-slate-200/70 flex gap-3.5 items-center transition hover:border-orange-300" data-category="{{ item.category }}">
+                <img src="{{ item.image }}" alt="{{ item.name }}" class="w-24 h-24 rounded-xl object-cover flex-shrink-0 bg-slate-100 shadow-inner">
+                
+                <div class="flex-1 flex flex-col justify-between self-stretch py-0.5">
+                    <div>
+                        <div class="flex items-start justify-between">
+                            <h3 class="font-bold text-slate-800 text-sm leading-snug">{{ item.name }}</h3>
+                        </div>
+                        <p class="text-[11px] text-slate-500 line-clamp-2 mt-1 leading-relaxed">{{ item.description }}</p>
+                    </div>
+
+                    <div class="flex items-center justify-between mt-2">
+                        <span class="text-orange-600 font-bold text-sm">฿{{ item.price | int }}</span>
+                        <button onclick='openItemModal({{ item | tojson }})' class="bg-orange-50 hover:bg-orange-500 text-orange-600 hover:text-white border border-orange-200 hover:border-transparent px-3 py-1 rounded-xl text-xs font-semibold transition flex items-center space-x-1 shadow-xs">
+                            <i class="fa-solid fa-plus text-[10px]"></i>
+                            <span>เลือก</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+
+    </main>
+
+    <!-- Floating Bottom Cart Bar -->
+    <div id="bottom-cart-bar" class="fixed bottom-0 left-0 right-0 p-3 bg-white/95 backdrop-blur-md border-t border-slate-200 z-30 shadow-lg transform translate-y-full transition-transform duration-300">
+        <div class="max-w-lg mx-auto flex items-center justify-between">
+            <div class="flex items-center space-x-3">
+                <div class="relative">
+                    <div class="w-11 h-11 bg-orange-600 rounded-xl flex items-center justify-center text-white shadow-md">
+                        <i class="fa-solid fa-basket-shopping text-lg"></i>
+                    </div>
+                    <span id="cart-count-badge" class="absolute -top-1 -right-1 bg-red-500 text-white text-[11px] font-bold w-5 h-5 rounded-full flex items-center justify-center border-2 border-white shadow">
+                        0
+                    </span>
+                </div>
+                <div>
+                    <div class="text-xs text-slate-500">ยอดรวมทั้งสิ้น</div>
+                    <div class="text-lg font-bold text-orange-600" id="cart-total-price">฿0</div>
+                </div>
+            </div>
+
+            <button onclick="openCartModal()" class="bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white font-semibold px-6 py-2.5 rounded-xl shadow-md text-sm flex items-center space-x-2 transition">
+                <span>ดูตะกร้าอาหาร</span>
+                <i class="fa-solid fa-chevron-right text-xs"></i>
+            </button>
+        </div>
+    </div>
+
+    <!-- Modal: Add Item / Customize -->
+    <div id="item-modal" class="fixed inset-0 bg-black/60 z-50 hidden flex items-end sm:items-center justify-center p-0 sm:p-4 transition-opacity">
+        <div class="bg-white rounded-t-3xl sm:rounded-2xl max-w-md w-full p-5 space-y-4 shadow-2xl max-h-[90vh] overflow-y-auto">
+            <div class="flex items-center justify-between border-b pb-3">
+                <h3 class="font-bold text-base text-slate-800" id="modal-item-name">ชื่อเมนู</h3>
+                <button onclick="closeItemModal()" class="text-slate-400 hover:text-slate-600 text-lg p-1">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+
+            <img id="modal-item-img" src="" class="w-full h-44 object-cover rounded-xl bg-slate-100">
+
+            <div>
+                <p class="text-xs text-slate-500 leading-relaxed" id="modal-item-desc"></p>
+                <div class="text-lg font-bold text-orange-600 mt-1" id="modal-item-price">฿0</div>
+            </div>
+
+            <!-- Notes -->
+            <div>
+                <label class="block text-xs font-semibold text-slate-700 mb-1">
+                    <i class="fa-regular fa-comment-dots text-orange-500 mr-1"></i> หมายเหตุเพิ่มเติม (ไม่บังคับ)
+                </label>
+                <input type="text" id="modal-item-note" placeholder="เช่น เผ็ดน้อย, ไม่ใส่ผักชี, หวาน 50%" class="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-orange-500 bg-slate-50">
+            </div>
+
+            <!-- Quantity Controls -->
+            <div class="flex items-center justify-between bg-slate-50 p-3 rounded-xl border border-slate-200">
+                <span class="text-xs font-semibold text-slate-700">จำนวนที่ต้องการ</span>
+                <div class="flex items-center space-x-3">
+                    <button onclick="changeModalQty(-1)" class="w-8 h-8 rounded-lg bg-white border border-slate-300 flex items-center justify-center text-slate-700 font-bold hover:bg-slate-100 active:scale-95 transition">
+                        <i class="fa-solid fa-minus text-xs"></i>
+                    </button>
+                    <span id="modal-item-qty" class="text-sm font-bold w-6 text-center text-slate-800">1</span>
+                    <button onclick="changeModalQty(1)" class="w-8 h-8 rounded-lg bg-orange-600 text-white flex items-center justify-center font-bold hover:bg-orange-700 active:scale-95 transition">
+                        <i class="fa-solid fa-plus text-xs"></i>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Add to Cart Action Button -->
+            <button onclick="confirmAddToCart()" class="w-full py-3 bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white font-bold rounded-xl shadow-md text-sm transition">
+                เพิ่มลงตะกร้า • <span id="modal-item-subtotal">฿0</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- Modal: Cart & Place Order -->
+    <div id="cart-modal" class="fixed inset-0 bg-black/60 z-50 hidden flex items-end sm:items-center justify-center p-0 sm:p-4">
+        <div class="bg-white rounded-t-3xl sm:rounded-2xl max-w-md w-full p-5 shadow-2xl flex flex-col max-h-[85vh]">
+            <div class="flex items-center justify-between border-b pb-3 flex-shrink-0">
+                <div class="flex items-center space-x-2">
+                    <i class="fa-solid fa-basket-shopping text-orange-500"></i>
+                    <h3 class="font-bold text-base text-slate-800">ตะกร้าอาหาร (โต๊ะ {{ table_id }})</h3>
+                </div>
+                <button onclick="closeCartModal()" class="text-slate-400 hover:text-slate-600 text-lg p-1">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+
+            <!-- Cart Items List -->
+            <div id="cart-items-list" class="overflow-y-auto flex-1 py-3 space-y-3">
+                <!-- Injected via JS -->
+            </div>
+
+            <!-- Footer & Place Order -->
+            <div class="border-t pt-3 flex-shrink-0 space-y-3">
+                <div class="flex items-center justify-between text-sm">
+                    <span class="text-slate-500">ยอดรวมทั้งหมด</span>
+                    <span class="text-xl font-bold text-orange-600" id="cart-modal-total">฿0</span>
+                </div>
+
+                <button onclick="submitOrder()" id="btn-submit-order" class="w-full py-3 bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white font-bold rounded-xl shadow-md text-sm transition flex items-center justify-center space-x-2">
+                    <i class="fa-solid fa-paper-plane"></i>
+                    <span>ส่งออเดอร์เข้าครัวทันที</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal: Active Orders & Status Tracking -->
+    <div id="orders-modal" class="fixed inset-0 bg-black/60 z-50 hidden flex items-end sm:items-center justify-center p-0 sm:p-4">
+        <div class="bg-white rounded-t-3xl sm:rounded-2xl max-w-md w-full p-5 shadow-2xl flex flex-col max-h-[85vh]">
+            <div class="flex items-center justify-between border-b pb-3 flex-shrink-0">
+                <div class="flex items-center space-x-2">
+                    <i class="fa-solid fa-clock-rotate-left text-orange-500"></i>
+                    <h3 class="font-bold text-base text-slate-800">สถานะรายการอาหารโต๊ะ {{ table_id }}</h3>
+                </div>
+                <button onclick="closeOrdersModal()" class="text-slate-400 hover:text-slate-600 text-lg p-1">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+
+            <!-- Order List -->
+            <div id="orders-history-list" class="overflow-y-auto flex-1 py-3 space-y-3">
+                <p class="text-center text-slate-400 text-xs py-8">กำลังโหลดข้อมูลสถานะ...</p>
+            </div>
+
+            <div class="border-t pt-3 flex-shrink-0">
+                <button onclick="closeOrdersModal()" class="w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-xl text-xs transition">
+                    ปิดหน้าต่าง
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- JavaScript Client Logic -->
+    <script>
+        const tableId = {{ table_id }};
+        let cart = [];
+        let currentItem = null;
+        let currentQty = 1;
+
+        // Status badge helpers
+        const statusMap = {
+            'pending': { label: '⏳ รอร้านรับออเดอร์', bg: 'bg-amber-100', text: 'text-amber-800', border: 'border-amber-300' },
+            'accepted': { label: '🍳 ครัวกำลังปรุง', bg: 'bg-blue-100', text: 'text-blue-800', border: 'border-blue-300' },
+            'cooked': { label: '🍲 ทำเสร็จแล้ว รอเสิร์ฟ', bg: 'bg-purple-100', text: 'text-purple-800', border: 'border-purple-300' },
+            'served': { label: '🍽️ นำเสิร์ฟเรียบร้อย', bg: 'bg-emerald-100', text: 'text-emerald-800', border: 'border-emerald-300' },
+            'paid': { label: '✅ ชำระเงินแล้ว', bg: 'bg-slate-100', text: 'text-slate-800', border: 'border-slate-300' }
+        };
+
+        // Filter categories
+        function filterCategory(cat) {
+            document.querySelectorAll('.cat-btn').forEach(btn => {
+                if (btn.getAttribute('data-cat') === cat) {
+                    btn.className = "cat-btn active-cat px-4 py-1.5 rounded-full text-xs font-medium bg-orange-600 text-white shadow-sm whitespace-nowrap transition";
+                } else {
+                    btn.className = "cat-btn px-4 py-1.5 rounded-full text-xs font-medium bg-white text-slate-600 border border-slate-200 whitespace-nowrap hover:bg-slate-50 transition";
+                }
+            });
+
+            document.querySelectorAll('.menu-item').forEach(el => {
+                if (cat === 'all' || el.getAttribute('data-category') === cat) {
+                    el.style.display = 'flex';
+                } else {
+                    el.style.display = 'none';
+                }
+            });
+        }
+
+        // Open item modal for customization
+        function openItemModal(item) {
+            currentItem = item;
+            currentQty = 1;
+            document.getElementById('modal-item-name').innerText = item.name;
+            document.getElementById('modal-item-desc').innerText = item.description;
+            document.getElementById('modal-item-img').src = item.image;
+            document.getElementById('modal-item-price').innerText = `฿${item.price}`;
+            document.getElementById('modal-item-note').value = '';
+            updateModalQtyDisplay();
+            document.getElementById('item-modal').classList.remove('hidden');
+        }
+
+        function closeItemModal() {
+            document.getElementById('item-modal').classList.add('hidden');
+            currentItem = null;
+        }
+
+        function changeModalQty(delta) {
+            currentQty = Math.max(1, currentQty + delta);
+            updateModalQtyDisplay();
+        }
+
+        function updateModalQtyDisplay() {
+            document.getElementById('modal-item-qty').innerText = currentQty;
+            const subtotal = currentItem ? currentItem.price * currentQty : 0;
+            document.getElementById('modal-item-subtotal').innerText = `฿${subtotal}`;
+        }
+
+        function confirmAddToCart() {
+            if (!currentItem) return;
+            const note = document.getElementById('modal-item-note').value.trim();
+            cart.push({
+                id: currentItem.id,
+                name: currentItem.name,
+                price: currentItem.price,
+                quantity: currentQty,
+                note: note
+            });
+            closeItemModal();
+            renderCartBar();
+        }
+
+        // Render floating bottom cart bar
+        function renderCartBar() {
+            const bar = document.getElementById('bottom-cart-bar');
+            const totalCount = cart.reduce((sum, item) => sum + item.quantity, 0);
+            const totalPrice = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+
+            if (totalCount > 0) {
+                bar.classList.remove('translate-y-full');
+                document.getElementById('cart-count-badge').innerText = totalCount;
+                document.getElementById('cart-total-price').innerText = `฿${totalPrice}`;
+            } else {
+                bar.classList.add('translate-y-full');
+            }
+        }
+
+        // Open / Close Cart Modal
+        function openCartModal() {
+            renderCartModalItems();
+            document.getElementById('cart-modal').classList.remove('hidden');
+        }
+
+        function closeCartModal() {
+            document.getElementById('cart-modal').classList.add('hidden');
+        }
+
+        function renderCartModalItems() {
+            const container = document.getElementById('cart-items-list');
+            if (cart.length === 0) {
+                container.innerHTML = `<p class="text-center text-slate-400 text-xs py-8">ไม่มีรายการในตะกร้า</p>`;
+                document.getElementById('cart-modal-total').innerText = '฿0';
+                return;
+            }
+
+            let html = '';
+            let total = 0;
+            cart.forEach((item, index) => {
+                const sub = item.price * item.quantity;
+                total += sub;
+                html += `
+                    <div class="bg-slate-50 p-3 rounded-xl border border-slate-200 flex items-center justify-between">
+                        <div class="flex-1 pr-2">
+                            <div class="font-bold text-xs text-slate-800">${item.name}</div>
+                            <div class="text-[11px] text-orange-600 font-semibold">฿${item.price} x ${item.quantity} = ฿${sub}</div>
+                            ${item.note ? `<div class="text-[10px] text-slate-500 bg-white px-2 py-0.5 rounded border border-slate-200 mt-1 inline-block">📝 ${item.note}</div>` : ''}
+                        </div>
+                        <div class="flex items-center space-x-2">
+                            <button onclick="removeCartItem(${index})" class="w-7 h-7 rounded-lg bg-red-100 text-red-600 flex items-center justify-center text-xs hover:bg-red-200 transition">
+                                <i class="fa-solid fa-trash"></i>
+                            </button>
+                        </div>
+                    </div>
+                `;
+            });
+
+            container.innerHTML = html;
+            document.getElementById('cart-modal-total').innerText = `฿${total}`;
+        }
+
+        function removeCartItem(index) {
+            cart.splice(index, 1);
+            renderCartBar();
+            renderCartModalItems();
+            if (cart.length === 0) {
+                closeCartModal();
+            }
+        }
+
+        // Submit order to API
+        async function submitOrder() {
+            if (cart.length === 0) return;
+            const btn = document.getElementById('btn-submit-order');
+            btn.disabled = true;
+            btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin mr-1"></i> กำลังส่งออเดอร์...`;
+
+            try {
+                const response = await fetch('/api/order', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        table_id: tableId,
+                        items: cart
+                    })
+                });
+
+                const result = await response.json();
+                if (result.success) {
+                    cart = [];
+                    renderCartBar();
+                    closeCartModal();
+                    alert('🎉 ส่งออเดอร์เข้าครัวเรียบร้อยแล้ว!');
+                    openOrdersModal();
+                } else {
+                    alert('เกิดข้อผิดพลาด: ' + result.error);
+                }
+            } catch (err) {
+                alert('ไม่สามารถส่งออเดอร์ได้ กรุณาลองใหม่อีกครั้ง');
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = `<i class="fa-solid fa-paper-plane mr-1"></i> ส่งออเดอร์เข้าครัวทันที`;
+            }
+        }
+
+        // Orders Status Tracker
+        function openOrdersModal() {
+            document.getElementById('orders-modal').classList.remove('hidden');
+            fetchTableOrders();
+        }
+
+        function closeOrdersModal() {
+            document.getElementById('orders-modal').classList.add('hidden');
+        }
+
+        async function fetchTableOrders() {
+            try {
+                const res = await fetch(`/api/table/${tableId}/orders`);
+                const data = await res.json();
+                const container = document.getElementById('orders-history-list');
+                const badge = document.getElementById('active-orders-badge');
+
+                if (data.orders.length > 0) {
+                    badge.innerText = data.orders.length;
+                    badge.classList.remove('hidden');
+                } else {
+                    badge.classList.add('hidden');
+                }
+
+                if (!document.getElementById('orders-modal').classList.contains('hidden')) {
+                    if (data.orders.length === 0) {
+                        container.innerHTML = `<p class="text-center text-slate-400 text-xs py-8">ยังไม่มีรายการอาหารที่สั่งในขณะนี้</p>`;
+                        return;
+                    }
+
+                    let html = '';
+                    data.orders.forEach(order => {
+                        const st = statusMap[order.status] || { label: order.status, bg: 'bg-slate-100', text: 'text-slate-700', border: 'border-slate-200' };
+                        html += `
+                            <div class="bg-white p-3.5 rounded-2xl border border-slate-200 shadow-xs space-y-2.5">
+                                <div class="flex items-center justify-between">
+                                    <div class="text-xs font-bold text-slate-700">ออเดอร์ #${order.order_id}</div>
+                                    <span class="px-2.5 py-1 rounded-full text-[11px] font-bold border ${st.bg} ${st.text} ${st.border}">
+                                        ${st.label}
+                                    </span>
+                                </div>
+
+                                <div class="space-y-1.5 border-t border-slate-100 pt-2">
+                                    ${order.items.map(it => `
+                                        <div class="flex justify-between text-xs text-slate-700">
+                                            <span>• ${it.name} <strong class="text-orange-600">x${it.quantity}</strong> ${it.note ? `<span class="text-slate-400 text-[10px]">(${it.note})</span>` : ''}</span>
+                                            <span class="font-medium">฿${it.price * it.quantity}</span>
+                                        </div>
+                                    `).join('')}
+                                </div>
+
+                                <div class="flex justify-between items-center text-xs font-bold text-slate-800 border-t border-slate-100 pt-2">
+                                    <span>ยอดรวมออเดอร์นี้</span>
+                                    <span class="text-orange-600">฿${order.total_price}</span>
+                                </div>
+                            </div>
+                        `;
+                    });
+                    container.innerHTML = html;
+                }
+            } catch (err) {
+                console.error("Error fetching table orders:", err);
+            }
+        }
+
+        // Auto poll table orders every 3.5 seconds
+        setInterval(fetchTableOrders, 3500);
+        fetchTableOrders();
+    </script>
+</body>
+</html>

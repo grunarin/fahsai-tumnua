@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>เคาน์เตอร์ & จอจัดการครัว - ร้านฟ้าใสตำนัว</title>
+    <!-- Favicon -->
+    <link rel="icon" type="image/png" href="/img/logo.png">
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Google Font: Prompt -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <!-- FontAwesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- QRCode.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <style>
+        body { font-family: 'Prompt', sans-serif; }
+    </style>
+</head>
+<body class="bg-slate-100 text-slate-800 min-h-screen">
+
+    <!-- Top Navigation Bar -->
+    <header class="bg-slate-900 text-white shadow-lg sticky top-0 z-40 border-b border-slate-800">
+        <div class="max-w-7xl mx-auto px-4 py-2.5 flex flex-wrap items-center justify-between gap-4">
+            <div class="flex items-center space-x-3">
+                <a href="/" class="relative block">
+                    <img src="/img/logo.png" alt="ฟ้าใสตำนัว Logo" class="w-12 h-12 rounded-full object-cover border-2 border-orange-500 shadow-md hover:scale-105 transition">
+                </a>
+                <div>
+                    <div class="flex items-center space-x-2">
+                        <h1 class="text-base font-bold text-white">ร้านฟ้าใสตำนัว • Kitchen & Cashier POS</h1>
+                        <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                            <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping mr-1"></span> Real-time Live
+                        </span>
+                    </div>
+                    <p class="text-xs text-slate-400">ระบบจัดการออเดอร์ครัวและรับชำระเงิน</p>
+                </div>
+            </div>
+
+            <!-- Header Controls -->
+            <div class="flex items-center space-x-2">
+                <!-- Sound alert toggle -->
+                <button id="sound-btn" onclick="toggleSound()" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-medium flex items-center space-x-1.5 border border-slate-700 transition">
+                    <i class="fa-solid fa-volume-high text-emerald-400" id="sound-icon"></i>
+                    <span id="sound-text">เปิดเสียงเตือน</span>
+                </button>
+
+                <!-- View QR Codes Modal -->
+                <button onclick="openQrModal()" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-medium flex items-center space-x-1.5 border border-slate-700 transition">
+                    <i class="fa-solid fa-qrcode text-orange-400"></i>
+                    <span>QR Code โต๊ะ</span>
+                </button>
+
+                <!-- Reports link -->
+                <a href="/reports" class="px-3 py-1.5 bg-amber-600/30 hover:bg-amber-600/50 text-amber-300 rounded-xl text-xs font-semibold flex items-center space-x-1.5 border border-amber-500/40 transition">
+                    <i class="fa-solid fa-chart-pie text-amber-400"></i>
+                    <span>รายงาน & เตรียมอาหาร</span>
+                </a>
+
+                <!-- Back to Home -->
+                <a href="/" class="px-3 py-1.5 bg-orange-600 hover:bg-orange-700 text-white rounded-xl text-xs font-semibold flex items-center space-x-1 transition shadow-sm">
+                    <i class="fa-solid fa-home"></i>
+                    <span>หน้าหลัก</span>
+                </a>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="max-w-7xl mx-auto px-4 py-6">
+        
+        <!-- Summary Stats Cards -->
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+            <!-- Stat 1: Revenue -->
+            <div class="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs flex items-center justify-between">
+                <div>
+                    <span class="text-xs text-slate-500 font-medium">ยอดขายรวมวันนี้</span>
+                    <div class="text-2xl font-bold text-emerald-600 mt-1" id="stat-revenue">฿0</div>
+                </div>
+                <div class="w-11 h-11 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center text-xl">
+                    <i class="fa-solid fa-coins"></i>
+                </div>
+            </div>
+
+            <!-- Stat 2: Active Orders -->
+            <div class="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs flex items-center justify-between">
+                <div>
+                    <span class="text-xs text-slate-500 font-medium">ออเดอร์กำลังดำเนินการ</span>
+                    <div class="text-2xl font-bold text-orange-600 mt-1" id="stat-active-orders">0</div>
+                </div>
+                <div class="w-11 h-11 rounded-xl bg-orange-50 text-orange-600 flex items-center justify-center text-xl">
+                    <i class="fa-solid fa-utensils"></i>
+                </div>
+            </div>
+
+            <!-- Stat 3: Active Tables -->
+            <div class="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs flex items-center justify-between">
+                <div>
+                    <span class="text-xs text-slate-500 font-medium">โต๊ะที่มีออเดอร์</span>
+                    <div class="text-2xl font-bold text-blue-600 mt-1" id="stat-active-tables">0</div>
+                </div>
+                <div class="w-11 h-11 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center text-xl">
+                    <i class="fa-solid fa-chair"></i>
+                </div>
+            </div>
+
+            <!-- Stat 4: Paid Orders -->
+            <div class="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs flex items-center justify-between">
+                <div>
+                    <span class="text-xs text-slate-500 font-medium">เช็คบิลแล้ว</span>
+                    <div class="text-2xl font-bold text-slate-700 mt-1" id="stat-paid-orders">0</div>
+                </div>
+                <div class="w-11 h-11 rounded-xl bg-slate-100 text-slate-600 flex items-center justify-center text-xl">
+                    <i class="fa-solid fa-circle-check"></i>
+                </div>
+            </div>
+        </div>
+
+        <!-- Filter Tabs -->
+        <div class="flex items-center justify-between mb-4 flex-wrap gap-2">
+            <div class="flex space-x-1.5 bg-white p-1 rounded-xl border border-slate-200 text-xs shadow-xs">
+                <button onclick="setFilter('all')" class="filter-tab active-tab px-3 py-1.5 rounded-lg font-semibold bg-orange-600 text-white transition" data-filter="all">
+                    ทั้งหมด (<span id="count-all">0</span>)
+                </button>
+                <button onclick="setFilter('pending')" class="filter-tab px-3 py-1.5 rounded-lg font-semibold text-slate-600 hover:bg-slate-100 transition" data-filter="pending">
+                    ⏳ รอรับออเดอร์ (<span id="count-pending">0</span>)
+                </button>
+                <button onclick="setFilter('accepted')" class="filter-tab px-3 py-1.5 rounded-lg font-semibold text-slate-600 hover:bg-slate-100 transition" data-filter="accepted">
+                    🍳 กำลังปรุง (<span id="count-accepted">0</span>)
+                </button>
+                <button onclick="setFilter('cooked')" class="filter-tab px-3 py-1.5 rounded-lg font-semibold text-slate-600 hover:bg-slate-100 transition" data-filter="cooked">
+                    🍲 ทำเสร็จแล้ว (<span id="count-cooked">0</span>)
+                </button>
+                <button onclick="setFilter('served')" class="filter-tab px-3 py-1.5 rounded-lg font-semibold text-slate-600 hover:bg-slate-100 transition" data-filter="served">
+                    🍽️ นำเสิร์ฟแล้ว (<span id="count-served">0</span>)
+                </button>
+            </div>
+
+            <div class="text-xs text-slate-500 flex items-center space-x-2">
+                <span class="inline-block w-2 h-2 rounded-full bg-emerald-500"></span>
+                <span>อัปเดตอัตโนมัติทุก 2.5 วินาที</span>
+            </div>
+        </div>
+
+        <!-- Orders Grid Container -->
+        <div id="orders-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <!-- Order Cards dynamically injected -->
+            <div class="col-span-full py-16 text-center text-slate-400">
+                <i class="fa-solid fa-spinner fa-spin text-2xl mb-2 text-orange-500"></i>
+                <p class="text-sm">กำลังเชื่อมต่อและโหลดข้อมูลออเดอร์...</p>
+            </div>
+        </div>
+
+    </main>
+
+    <!-- Modal: View QR Codes -->
+    <div id="qr-modal" class="fixed inset-0 bg-black/60 z-50 hidden flex items-center justify-center p-4">
+        <div class="bg-white rounded-3xl max-w-4xl w-full p-6 shadow-2xl max-h-[90vh] overflow-y-auto">
+            <div class="flex items-center justify-between border-b pb-4 mb-4">
+                <div class="flex items-center space-x-2">
+                    <i class="fa-solid fa-qrcode text-orange-600 text-xl"></i>
+                    <h3 class="text-lg font-bold text-slate-800">QR Code สั่งอาหารประจำโต๊ะ (โต๊ะ 1 - 6)</h3>
+                </div>
+                <button onclick="closeQrModal()" class="text-slate-400 hover:text-slate-600 text-xl p-1">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+
+            <p class="text-xs text-slate-500 mb-6">คุณสามารถเปิดให้ลูกค้าสแกนจากหน้าจอนี้ หรือพิมพ์ออกมาวางที่โต๊ะได้</p>
+
+            <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-4" id="modal-qr-grid">
+                {% for t in range(1, 7) %}
+                <div class="bg-slate-50 p-3 rounded-2xl border border-slate-200 text-center flex flex-col items-center">
+                    <div class="w-8 h-8 rounded-full bg-orange-600 text-white font-bold text-xs flex items-center justify-center mb-2">
+                        {{ t }}
+                    </div>
+                    <span class="text-xs font-bold text-slate-700 mb-2">โต๊ะที่ {{ t }}</span>
+                    <div id="modal-qr-{{ t }}" class="p-1 bg-white rounded-xl border border-slate-200 mb-2"></div>
+                    <a href="/table/{{ t }}" target="_blank" class="text-[10px] text-orange-600 hover:underline">เปิดดูเมนู</a>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+
+    <!-- JavaScript POS Logic -->
+    <script>
+        let currentFilter = 'all';
+        let knownOrderIds = new Set();
+        let soundEnabled = true;
+        let audioCtx = null;
+
+        // Sound chime generator using Web Audio API
+        function playChime() {
+            if (!soundEnabled) return;
+            try {
+                if (!audioCtx) {
+                    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                }
+                const now = audioCtx.currentTime;
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(587.33, now); // D5
+                osc.frequency.exponentialRampToValueAtTime(880, now + 0.15); // A5
+                
+                gain.gain.setValueAtTime(0.3, now);
+                gain.gain.exponentialRampToValueAtTime(0.001, now + 0.6);
+                
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+                
+                osc.start(now);
+                osc.stop(now + 0.6);
+            } catch (e) {
+                console.log("Audio alert error:", e);
+            }
+        }
+
+        function toggleSound() {
+            soundEnabled = !soundEnabled;
+            const icon = document.getElementById('sound-icon');
+            const text = document.getElementById('sound-text');
+            if (soundEnabled) {
+                icon.className = 'fa-solid fa-volume-high text-emerald-400';
+                text.innerText = 'เปิดเสียงเตือน';
+                playChime();
+            } else {
+                icon.className = 'fa-solid fa-volume-xmark text-slate-500';
+                text.innerText = 'ปิดเสียงเตือน';
+            }
+        }
+
+        // Filter tabs
+        function setFilter(filter) {
+            currentFilter = filter;
+            document.querySelectorAll('.filter-tab').forEach(tab => {
+                if (tab.getAttribute('data-filter') === filter) {
+                    tab.className = "filter-tab active-tab px-3 py-1.5 rounded-lg font-semibold bg-orange-600 text-white transition";
+                } else {
+                    tab.className = "filter-tab px-3 py-1.5 rounded-lg font-semibold text-slate-600 hover:bg-slate-100 transition";
+                }
+            });
+            fetchOrders();
+        }
+
+        // Fetch counter orders and stats
+        async function fetchOrders() {
+            try {
+                const res = await fetch('/api/counter/orders');
+                const data = await res.json();
+                
+                // Update stats
+                document.getElementById('stat-revenue').innerText = `฿${data.stats.revenue.toLocaleString()}`;
+                document.getElementById('stat-active-orders').innerText = data.stats.active_orders;
+                document.getElementById('stat-active-tables').innerText = data.stats.active_tables;
+                document.getElementById('stat-paid-orders').innerText = data.stats.paid_orders;
+
+                // Update tab counts
+                const counts = { all: data.orders.length, pending: 0, accepted: 0, cooked: 0, served: 0 };
+                data.orders.forEach(o => {
+                    if (counts[o.status] !== undefined) counts[o.status]++;
+                });
+                document.getElementById('count-all').innerText = counts.all;
+                document.getElementById('count-pending').innerText = counts.pending;
+                document.getElementById('count-accepted').innerText = counts.accepted;
+                document.getElementById('count-cooked').innerText = counts.cooked;
+                document.getElementById('count-served').innerText = counts.served;
+
+                // Check for new pending orders to sound alarm
+                let hasNewPending = false;
+                data.orders.forEach(o => {
+                    if (o.status === 'pending' && !knownOrderIds.has(o.order_id)) {
+                        hasNewPending = true;
+                    }
+                    knownOrderIds.add(o.order_id);
+                });
+                if (hasNewPending) {
+                    playChime();
+                }
+
+                // Filter items
+                const filtered = data.orders.filter(o => currentFilter === 'all' || o.status === currentFilter);
+                renderOrders(filtered);
+
+            } catch (err) {
+                console.error("Fetch orders failed:", err);
+            }
+        }
+
+        function renderOrders(orders) {
+            const container = document.getElementById('orders-grid');
+            if (orders.length === 0) {
+                container.innerHTML = `
+                    <div class="col-span-full py-14 text-center bg-white rounded-3xl border border-slate-200 shadow-xs flex flex-col items-center justify-center">
+                        <img src="/img/logo.png" alt="น้องฟ้าใส" class="w-24 h-24 object-contain mb-3 drop-shadow-md animate-bounce duration-1000">
+                        <h4 class="font-bold text-slate-700 text-base">ยังไม่มีออเดอร์ในหมวดนี้</h4>
+                        <p class="text-xs text-slate-400 mt-1 max-w-sm">น้องฟ้าใสเตรียมครกพร้อมตำเสมอค่ะ เมื่อลูกค้าส่งออเดอร์จากโต๊ะ รายการจะเด้งขึ้นมาที่นี่ทันที 🌶️</p>
+                    </div>
+                `;
+                return;
+            }
+
+            let html = '';
+            orders.forEach(order => {
+                let statusBadge = '';
+                let actionButtons = '';
+                let borderStyle = 'border-slate-200';
+
+                if (order.status === 'pending') {
+                    borderStyle = 'border-amber-400 ring-2 ring-amber-300/40 bg-amber-50/20';
+                    statusBadge = `<span class="px-2.5 py-1 rounded-full text-xs font-bold bg-amber-100 text-amber-800 border border-amber-300 animate-pulse">⏳ รอรับออเดอร์</span>`;
+                    actionButtons = `
+                        <button onclick="updateStatus(${order.order_id}, 'accepted')" class="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow transition flex items-center justify-center space-x-1.5">
+                            <i class="fa-solid fa-check"></i>
+                            <span>1. กดรับออเดอร์</span>
+                        </button>
+                    `;
+                } else if (order.status === 'accepted') {
+                    borderStyle = 'border-blue-300';
+                    statusBadge = `<span class="px-2.5 py-1 rounded-full text-xs font-bold bg-blue-100 text-blue-800 border border-blue-300">🍳 กำลังปรุงอาหาร</span>`;
+                    actionButtons = `
+                        <button onclick="updateStatus(${order.order_id}, 'cooked')" class="flex-1 py-2.5 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold shadow transition flex items-center justify-center space-x-1.5">
+                            <i class="fa-solid fa-utensils"></i>
+                            <span>2. ทำอาหารเสร็จ</span>
+                        </button>
+                    `;
+                } else if (order.status === 'cooked') {
+                    borderStyle = 'border-purple-300';
+                    statusBadge = `<span class="px-2.5 py-1 rounded-full text-xs font-bold bg-purple-100 text-purple-800 border border-purple-300">🍲 ปรุงเสร็จ รอเสิร์ฟ</span>`;
+                    actionButtons = `
+                        <button onclick="updateStatus(${order.order_id}, 'served')" class="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow transition flex items-center justify-center space-x-1.5">
+                            <i class="fa-solid fa-bell-concierge"></i>
+                            <span>3. นำเสิร์ฟแล้ว</span>
+                        </button>
+                    `;
+                } else if (order.status === 'served') {
+                    borderStyle = 'border-emerald-300';
+                    statusBadge = `<span class="px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">🍽️ เสิร์ฟแล้ว (รอคิดเงิน)</span>`;
+                    actionButtons = `
+                        <button onclick="updateStatus(${order.order_id}, 'paid')" class="flex-1 py-2.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-bold shadow transition flex items-center justify-center space-x-1.5">
+                            <i class="fa-solid fa-money-bill-wave"></i>
+                            <span>4. รับเงินค่าอาหาร (ปิดบิล)</span>
+                        </button>
+                    `;
+                }
+
+                html += `
+                    <div class="bg-white rounded-2xl p-4.5 border ${borderStyle} shadow-xs flex flex-col justify-between space-y-3.5 transition hover:shadow-md">
+                        
+                        <!-- Top Header -->
+                        <div class="flex items-center justify-between border-b border-slate-100 pb-3">
+                            <div class="flex items-center space-x-2.5">
+                                <span class="w-10 h-10 rounded-xl bg-orange-600 text-white font-bold text-base flex items-center justify-center shadow-xs">
+                                    ${order.table_id}
+                                </span>
+                                <div>
+                                    <div class="font-bold text-sm text-slate-800">โต๊ะที่ ${order.table_id}</div>
+                                    <div class="text-[11px] text-slate-400">ออเดอร์ #${order.order_id} • ${order.created_at.split(' ')[1] || ''}</div>
+                                </div>
+                            </div>
+                            ${statusBadge}
+                        </div>
+
+                        <!-- Items List -->
+                        <div class="space-y-2 flex-1 max-h-56 overflow-y-auto pr-1">
+                            ${order.items.map(it => `
+                                <div class="bg-slate-50 p-2.5 rounded-xl border border-slate-200/80 flex justify-between items-start text-xs">
+                                    <div class="pr-2">
+                                        <div class="font-bold text-slate-800">
+                                            ${it.name} <span class="text-orange-600 text-xs">x${it.quantity}</span>
+                                        </div>
+                                        ${it.note ? `<div class="text-[10px] text-red-600 bg-red-50 border border-red-200 px-1.5 py-0.5 rounded mt-1 inline-block font-medium">⚠️ โน้ต: ${it.note}</div>` : ''}
+                                    </div>
+                                    <span class="font-bold text-slate-700 whitespace-nowrap">฿${it.price * it.quantity}</span>
+                                </div>
+                            `).join('')}
+                        </div>
+
+                        <!-- Total & Action Buttons -->
+                        <div class="border-t border-slate-100 pt-3 space-y-2.5">
+                            <div class="flex justify-between items-center text-xs">
+                                <span class="text-slate-500 font-medium">ยอดรวมออเดอร์นี้</span>
+                                <span class="text-base font-bold text-orange-600">฿${order.total_price}</span>
+                            </div>
+
+                            <div class="flex space-x-2">
+                                ${actionButtons}
+                                <button onclick="payAllTable(${order.table_id})" title="เช็คบิลทุกออเดอร์ของโต๊ะนี้" class="px-3 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold border border-slate-200 transition">
+                                    <i class="fa-solid fa-receipt mr-1"></i> เช็คบิลโต๊ะ ${order.table_id}
+                                </button>
+                            </div>
+                        </div>
+
+                    </div>
+                `;
+            });
+
+            container.innerHTML = html;
+        }
+
+        // Change single order status
+        async function updateStatus(orderId, newStatus) {
+            try {
+                const res = await fetch(`/api/order/${orderId}/status`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ status: newStatus })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    fetchOrders();
+                } else {
+                    alert('เกิดข้อผิดพลาด: ' + data.error);
+                }
+            } catch (err) {
+                alert('ไม่สามารถอัปเดตสถานะได้');
+            }
+        }
+
+        // Pay all orders for a table
+        async function payAllTable(tableId) {
+            if (!confirm(`ยืนยันการรับเงิน / ปิดบิลทั้งหมดสำหรับ โต๊ะที่ ${tableId} ใช่หรือไม่?`)) return;
+            try {
+                const res = await fetch(`/api/table/${tableId}/pay_all`, { method: 'POST' });
+                const data = await res.json();
+                if (data.success) {
+                    alert(`✅ ปิดบิลและบันทึกยอดขาย โต๊ะที่ ${tableId} เรียบร้อยแล้ว!`);
+                    fetchOrders();
+                }
+            } catch (err) {
+                alert('ไม่สามารถบันทึกการชำระเงินได้');
+            }
+        }
+
+        // Modal for QR codes
+        let qrInitialized = false;
+        function openQrModal() {
+            document.getElementById('qr-modal').classList.remove('hidden');
+            if (!qrInitialized) {
+                const baseUrl = window.location.origin;
+                for (let i = 1; i <= 6; i++) {
+                    const el = document.getElementById(`modal-qr-${i}`);
+                    new QRCode(el, {
+                        text: `${baseUrl}/table/${i}`,
+                        width: 85,
+                        height: 85,
+                        colorDark: "#0f172a",
+                        colorLight: "#ffffff"
+                    });
+                }
+                qrInitialized = true;
+            }
+        }
+
+        function closeQrModal() {
+            document.getElementById('qr-modal').classList.add('hidden');
+        }
+
+        // Auto polling every 2.5 seconds
+        setInterval(fetchOrders, 2500);
+        fetchOrders();
+    </script>
+</body>
+</html>
