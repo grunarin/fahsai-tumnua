@@ -1,4 +1,5 @@
 import streamlit as st
+import streamlit.components.v1 as components
 import sqlite3
 import os
 import base64
@@ -239,9 +240,16 @@ def init_db():
             price REAL NOT NULL,
             cost REAL DEFAULT 0,
             quantity INTEGER NOT NULL,
-            note TEXT
+            note TEXT,
+            status TEXT DEFAULT 'pending'
         )
     ''')
+    # ตรวจสอบและอัปเกรดคอลัมน์ status ในตาราง order_items แบบอัตโนมัติ
+    c.execute("PRAGMA table_info(order_items)")
+    existing_cols = [col[1] for col in c.fetchall()]
+    if 'status' not in existing_cols:
+        c.execute("ALTER TABLE order_items ADD COLUMN status TEXT DEFAULT 'pending'")
+    c.execute("UPDATE order_items SET status = 'pending' WHERE status IS NULL")
     c.execute('''
         CREATE TABLE IF NOT EXISTS tables (
             id INTEGER PRIMARY KEY,
@@ -349,6 +357,416 @@ def play_order_sound():
     st.markdown(audio_html, unsafe_allow_html=True)
 
 # ==============================================================================
+# 🧾 ฟังก์ชันสร้างใบเสร็จรับเงินอย่างย่อ (HTML / Print / PDF)
+# ==============================================================================
+def generate_receipt_html(order_id, table_id, items, total_price, order_time):
+    total_qty = sum(item[1] for item in items)
+    vat_included = round(total_price * 7 / 107, 2)
+    before_vat = round(total_price - vat_included, 2)
+    
+    items_rows_html = ""
+    for idx, item in enumerate(items, 1):
+        iname = item[0]
+        iqty = item[1]
+        iprice = item[2]
+        line_total = int(iqty * iprice)
+        items_rows_html += f"""
+        <tr>
+            <td style="padding: 4px 0; text-align: left; font-size: 13px;">{idx}. {iname}</td>
+            <td style="padding: 4px 0; text-align: center; font-size: 13px;">{iqty}</td>
+            <td style="padding: 4px 0; text-align: right; font-size: 13px;">{int(iprice)}</td>
+            <td style="padding: 4px 0; text-align: right; font-size: 13px; font-weight: bold;">{line_total:,}</td>
+        </tr>
+        """
+        
+    html = f"""
+    <!DOCTYPE html>
+    <html lang="th">
+    <head>
+    <meta charset="UTF-8">
+    <title>ใบเสร็จรับเงินอย่างย่อ #{order_id}</title>
+    <style>
+        @page {{
+            size: 80mm auto;
+            margin: 3mm;
+        }}
+        @media print {{
+            body {{
+                margin: 0 !important;
+                padding: 4px !important;
+                width: 76mm !important;
+                box-shadow: none !important;
+                border: none !important;
+            }}
+            .no-print {{
+                display: none !important;
+            }}
+        }}
+        body {{
+            font-family: 'Sarabun', 'Segoe UI', Tahoma, monospace, sans-serif;
+            color: #111;
+            background: #fff;
+            width: 290px;
+            margin: 4px auto;
+            padding: 14px 10px;
+            font-size: 13px;
+            line-height: 1.38;
+            border: 1px dashed #bbb;
+            border-radius: 6px;
+            box-sizing: border-box;
+        }}
+        .text-center {{ text-align: center; }}
+        .text-right {{ text-align: right; }}
+        .bold {{ font-weight: bold; }}
+        .dashed {{
+            border-top: 1px dashed #777;
+            margin: 8px 0;
+        }}
+        .double-line {{
+            border-top: 2px solid #222;
+            margin: 8px 0;
+        }}
+        table {{
+            width: 100%;
+            border-collapse: collapse;
+        }}
+        th {{
+            border-bottom: 1px dashed #777;
+            padding: 4px 0;
+            font-size: 12px;
+        }}
+        .btn-print {{
+            background: #ea580c;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            padding: 10px 14px;
+            font-size: 14px;
+            font-weight: bold;
+            cursor: pointer;
+            width: 100%;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.15);
+            transition: background 0.2s;
+        }}
+        .btn-print:hover {{
+            background: #c2410c;
+        }}
+    </style>
+    </head>
+    <body>
+        <div class="no-print" style="margin-bottom: 12px;">
+            <button class="btn-print" onclick="window.print()">🖨️ สั่งพิมพ์ใบเสร็จ / บันทึกเป็น PDF</button>
+        </div>
+        
+        <div class="text-center">
+            <div style="font-size: 18px; font-weight: bold; color: #c2410c;">🌶️ ร้านฟ้าใสตำนัว</div>
+            <div style="font-size: 11px; color: #444;">(FAHSAI TUM NUA)</div>
+            <div style="font-size: 12px; margin-top: 3px; font-weight: bold;">ใบเสร็จรับเงิน / ใบกำกับภาษีอย่างย่อ</div>
+            <div style="font-size: 11px; color: #666;">โทร. 089-999-9999 • ยินดีให้บริการ</div>
+        </div>
+        
+        <div class="dashed"></div>
+        
+        <div style="display: flex; justify-content: space-between; font-size: 12px;">
+            <span><strong>โต๊ะที่:</strong> โต๊ะที่ {table_id}</span>
+            <span><strong>บิลเลขที่:</strong> #{order_id}</span>
+        </div>
+        <div style="font-size: 12px; color: #444;">
+            <strong>วันที่-เวลา:</strong> {order_time}
+        </div>
+        
+        <div class="dashed"></div>
+        
+        <table>
+            <thead>
+                <tr>
+                    <th style="text-align: left;">รายการอาหาร</th>
+                    <th style="text-align: center; width: 32px;">จน.</th>
+                    <th style="text-align: right; width: 45px;">ราคา</th>
+                    <th style="text-align: right; width: 50px;">รวม</th>
+                </tr>
+            </thead>
+            <tbody>
+                {items_rows_html}
+            </tbody>
+        </table>
+        
+        <div class="dashed"></div>
+        
+        <table style="font-size: 12.5px;">
+            <tr>
+                <td>จำนวนรวม:</td>
+                <td class="text-right bold">{total_qty} จาน</td>
+            </tr>
+            <tr>
+                <td>มูลค่าก่อนภาษี (Subtotal):</td>
+                <td class="text-right">฿{before_vat:,.2f}</td>
+            </tr>
+            <tr>
+                <td>ภาษีมูลค่าเพิ่ม (VAT 7% รวมแล้ว):</td>
+                <td class="text-right">฿{vat_included:,.2f}</td>
+            </tr>
+            <tr style="font-size: 15px; font-weight: bold; color: #c2410c;">
+                <td style="padding-top: 5px;">ยอดชำระสุทธิ (TOTAL):</td>
+                <td class="text-right" style="padding-top: 5px;">฿{int(total_price):,}</td>
+            </tr>
+        </table>
+        
+        <div class="double-line"></div>
+        
+        <div class="text-center" style="font-size: 11px; color: #444;">
+            <div>ชำระโดย: เงินสด / โอนเงิน PromptPay</div>
+            <div style="margin-top: 4px; font-weight: bold; color: #111;">ขอบพระคุณที่มาอุดหนุนค่ะ 🙏</div>
+            <div>โอกาสหน้าเชิญใหม่นะคะ แซ่บนัวทุกจาน!</div>
+        </div>
+    </body>
+    </html>
+    """
+    return html
+
+def render_receipt_box(oid, conn):
+    c = conn.cursor()
+    c.execute("SELECT table_id, total_price, created_at, status FROM orders WHERE id = ?", (oid,))
+    row = c.fetchone()
+    if not row:
+        st.session_state['active_receipt_oid'] = None
+        return
+    t_id, total, otime, st_code = row
+    c.execute("SELECT item_name, quantity, price FROM order_items WHERE order_id = ?", (oid,))
+    items = c.fetchall()
+    
+    receipt_html = generate_receipt_html(oid, t_id, items, total, otime)
+    
+    with st.container(border=True):
+        st.markdown(f"### 🧾 ใบเสร็จรับเงินอย่างย่อ — โต๊ะที่ {t_id} (บิล #{oid})")
+        st.caption("สามารถกดปุ่ม **🖨️ สั่งพิมพ์ใบเสร็จ / บันทึกเป็น PDF** ด้านล่างนี้ หรือดาวน์โหลดไฟล์ได้ทันทีค่ะ")
+        
+        components.html(receipt_html, height=490, scrolling=True)
+        
+        rc1, rc2, rc3 = st.columns([1.5, 1.5, 1])
+        with rc1:
+            st.download_button(
+                label="💾 ดาวน์โหลดไฟล์ใบเสร็จ (.html)",
+                data=receipt_html,
+                file_name=f"receipt_table{t_id}_order{oid}.html",
+                mime="text/html",
+                use_container_width=True,
+                key=f"dl_receipt_file_{oid}"
+            )
+        with rc2:
+            if st_code != 'paid':
+                if st.button("💵 ยืนยันรับเงิน (ปิดบิล)", key=f"pay_confirm_btn_{oid}", type="primary", use_container_width=True):
+                    c.execute("UPDATE orders SET status = 'paid' WHERE id = ?", (oid,))
+                    conn.commit()
+                    st.session_state['active_receipt_oid'] = None
+                    st.toast(f"ปิดบิลโต๊ะ {t_id} เรียบร้อยแล้วค่ะ!", icon="✅")
+                    st.rerun()
+            else:
+                st.info("✅ บิลนี้ชำระเงินเรียบร้อยแล้ว")
+        with rc3:
+            if st.button("❌ ปิดหน้าต่างใบเสร็จ", key=f"close_receipt_btn_{oid}", use_container_width=True):
+                st.session_state['active_receipt_oid'] = None
+                st.rerun()
+
+# ==============================================================================
+# 🍳 จอครัว & เคาน์เตอร์คิดเงิน (Fragment ทำงานอัตโนมัติทุก 3 วินาที)
+# ==============================================================================
+@st.fragment(run_every=3)
+def render_pos_dashboard():
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    
+    # ตรวจจับออเดอร์ใหม่สถานะ pending ที่เพิ่งเข้ามา
+    c.execute("SELECT MAX(id) FROM orders WHERE status = 'pending'")
+    row_max = c.fetchone()
+    cur_max = row_max[0] if (row_max and row_max[0]) else 0
+    
+    if 'last_seen_pending_id' not in st.session_state:
+        st.session_state['last_seen_pending_id'] = cur_max
+    elif cur_max > st.session_state['last_seen_pending_id']:
+        st.session_state['last_seen_pending_id'] = cur_max
+        play_order_sound()
+        st.toast(f"🔔 มีออเดอร์ใหม่ #{cur_max} เข้ามาในครัวแล้วค่ะ!", icon="🛎️")
+        st.warning(f"🔔 **มีออเดอร์ใหม่ #{cur_max} เพิ่งส่งเข้ามาในครัว!** กำลังรอให้เตรียมอาหาร")
+
+    # แถบแสดงสถานะอัปเดตสดแบบเรียลไทม์
+    top_c1, top_c2 = st.columns([3, 1])
+    with top_c1:
+        st.markdown(f"**⚡ สถานะระบบ:** :green[**● เชื่อมต่อสด • อัปเดตออเดอร์อัตโนมัติทุก 3 วินาที**] <span style='color: #64748b; font-size: 0.85rem;'>(เวลาปัจจุบัน: {datetime.now().strftime('%H:%M:%S')})</span>", unsafe_allow_html=True)
+    with top_c2:
+        if st.button("🔔 ทดสอบเสียงกระดิ่ง", key="btn_test_sound", use_container_width=True):
+            play_order_sound()
+            st.toast("ทดสอบเสียงกระดิ่งเตือนออเดอร์แล้ว 🔔", icon="🛎️")
+
+    c.execute("SELECT COALESCE(SUM(total_price), 0), COUNT(*) FROM orders WHERE status IN ('paid', 'archived')")
+    revenue, paid_cnt = c.fetchone()
+    c.execute("SELECT COUNT(*), COUNT(DISTINCT table_id) FROM orders WHERE status NOT IN ('paid', 'archived')")
+    active_cnt, active_tables = c.fetchone()
+    
+    # Responsive Metrics
+    s1, s2, s3, s4 = st.columns(4)
+    s1.metric("💰 ยอดขายรวม", f"฿{int(revenue):,}")
+    s2.metric("🍳 กำลังปรุง/เสิร์ฟ", f"{active_cnt} บิล")
+    s3.metric("🪑 นั่งทาน", f"{active_tables} โต๊ะ")
+    s4.metric("✅ เช็คบิลแล้ว", f"{paid_cnt} บิล")
+    
+    st.write("---")
+    
+    # หากมีการกดเช็คบิล/ดูใบเสร็จ ให้แสดงกล่องใบเสร็จอย่างย่อด้านบนสุด
+    active_rec_id = st.session_state.get('active_receipt_oid')
+    if active_rec_id:
+        render_receipt_box(active_rec_id, conn)
+        st.write("---")
+
+    c.execute('''
+        SELECT id, table_id, status, total_price, created_at 
+        FROM orders 
+        WHERE status NOT IN ('paid', 'archived')
+        ORDER BY 
+            CASE status 
+                WHEN 'pending' THEN 1 
+                WHEN 'accepted' THEN 2 
+                WHEN 'cooked' THEN 3 
+                WHEN 'served' THEN 4 
+            END, id ASC
+    ''')
+    orders_to_manage = c.fetchall()
+    
+    if not orders_to_manage:
+        st.success("🎉 ไม่มีออเดอร์ค้างในครัว น้องฟ้าใสพร้อมรับออเดอร์ใหม่เสมอค่ะ 🌶️")
+    else:
+        grid_cols = st.columns(3)
+        for idx, (oid, t_id, st_code, total, otime) in enumerate(orders_to_manage):
+            with grid_cols[idx % 3]:
+                with st.container(border=True):
+                    h1, h2 = st.columns([2, 1])
+                    h1.markdown(f"### โต๊ะที่ {t_id}")
+                    h2.caption(f"#{oid}")
+                    st.caption(f"เวลาสั่ง: {otime}")
+                    
+                    c.execute("""
+                        SELECT id, item_name, quantity, note, price, COALESCE(status, 'pending')
+                        FROM order_items 
+                        WHERE order_id = ?
+                    """, (oid,))
+                    items_in_order = c.fetchall()
+                    
+                    total_items = len(items_in_order)
+                    served_items = sum(1 for it in items_in_order if it[5] == 'served')
+                    cooked_items = sum(1 for it in items_in_order if it[5] == 'cooked')
+                    all_items_served = (total_items > 0) and (served_items == total_items)
+                    
+                    st.markdown("**📋 รายการอาหารในบิล:**")
+                    for oi_id, iname, iqty, inote, iprice, istatus in items_in_order:
+                        with st.container(border=True):
+                            it_h1, it_h2 = st.columns([2.6, 1.4])
+                            with it_h1:
+                                st.markdown(f"**{iname}** <span style='color: #ea580c; font-weight: bold;'>x{iqty}</span>", unsafe_allow_html=True)
+                                if inote:
+                                    st.caption(f"⚠️ {inote}")
+                            with it_h2:
+                                if istatus == 'pending':
+                                    st.markdown("<div style='text-align: right;'><span style='background: #fff7ed; color: #c2410c; padding: 2px 6px; border-radius: 4px; font-size: 0.8rem; font-weight: bold; border: 1px solid #fdba74;'>⏳ กำลังปรุง</span></div>", unsafe_allow_html=True)
+                                elif istatus == 'cooked':
+                                    st.markdown("<div style='text-align: right;'><span style='background: #f3e8ff; color: #7e22ce; padding: 2px 6px; border-radius: 4px; font-size: 0.8rem; font-weight: bold; border: 1px solid #d8b4fe;'>🍳 เสร็จแล้ว</span></div>", unsafe_allow_html=True)
+                                elif istatus == 'served':
+                                    st.markdown("<div style='text-align: right;'><span style='background: #f0fdf4; color: #15803d; padding: 2px 6px; border-radius: 4px; font-size: 0.8rem; font-weight: bold; border: 1px solid #86efac;'>✅ เสิร์ฟแล้ว</span></div>", unsafe_allow_html=True)
+                            
+                            # ปุ่มเปลี่ยนสถานะแต่ละเมนู: เสร็จแล้ว / นำเสิร์ฟแล้ว
+                            act_c1, act_c2 = st.columns(2)
+                            if istatus == 'pending':
+                                with act_c1:
+                                    if st.button("🍳 เสร็จ", key=f"btn_ck_{oi_id}", use_container_width=True, help="เปลี่ยนสถานะเป็นปรุงเสร็จแล้ว"):
+                                        c.execute("UPDATE order_items SET status = 'cooked' WHERE id = ?", (oi_id,))
+                                        c.execute("UPDATE orders SET status = 'cooked' WHERE id = ? AND status IN ('pending', 'accepted')", (oid,))
+                                        conn.commit()
+                                        st.rerun()
+                                with act_c2:
+                                    if st.button("🍽️ เสิร์ฟ", key=f"btn_sv_{oi_id}", type="primary", use_container_width=True, help="เปลี่ยนสถานะเป็นนำเสิร์ฟแล้ว"):
+                                        c.execute("UPDATE order_items SET status = 'served' WHERE id = ?", (oi_id,))
+                                        c.execute("SELECT COUNT(*) FROM order_items WHERE order_id = ? AND status != 'served'", (oid,))
+                                        if c.fetchone()[0] == 0:
+                                            c.execute("UPDATE orders SET status = 'served' WHERE id = ?", (oid,))
+                                        else:
+                                            c.execute("UPDATE orders SET status = 'cooked' WHERE id = ?", (oid,))
+                                        conn.commit()
+                                        st.rerun()
+                            elif istatus == 'cooked':
+                                with act_c1:
+                                    st.caption("รอพนักงานยกเสิร์ฟ")
+                                with act_c2:
+                                    if st.button("🍽️ เสิร์ฟ", key=f"btn_sv_{oi_id}", type="primary", use_container_width=True, help="เปลี่ยนสถานะเป็นนำเสิร์ฟแล้ว"):
+                                        c.execute("UPDATE order_items SET status = 'served' WHERE id = ?", (oi_id,))
+                                        c.execute("SELECT COUNT(*) FROM order_items WHERE order_id = ? AND status != 'served'", (oid,))
+                                        if c.fetchone()[0] == 0:
+                                            c.execute("UPDATE orders SET status = 'served' WHERE id = ?", (oid,))
+                                        conn.commit()
+                                        st.rerun()
+                            elif istatus == 'served':
+                                with act_c1:
+                                    st.write("")
+                                with act_c2:
+                                    if st.button("↩️ ยกเลิก", key=f"btn_un_{oi_id}", use_container_width=True, help="ย้อนกลับเป็นกำลังปรุง"):
+                                        c.execute("UPDATE order_items SET status = 'pending' WHERE id = ?", (oi_id,))
+                                        c.execute("UPDATE orders SET status = 'cooked' WHERE id = ?", (oid,))
+                                        conn.commit()
+                                        st.rerun()
+                    
+                    # ปุ่มทางลัด: เสิร์ฟทุกเมนูพร้อมกัน
+                    if not all_items_served:
+                        if st.button("⚡ เสิร์ฟทุกเมนูทันที", key=f"btn_all_srv_{oid}", use_container_width=True):
+                            c.execute("UPDATE order_items SET status = 'served' WHERE order_id = ?", (oid,))
+                            c.execute("UPDATE orders SET status = 'served' WHERE id = ?", (oid,))
+                            conn.commit()
+                            st.toast(f"เสิร์ฟอาหารโต๊ะ {t_id} ครบทุกเมนูแล้วค่ะ!", icon="🍽️")
+                            st.rerun()
+
+                    st.write("---")
+                    st.markdown(f"**ยอดรวม: <span style='color: #ea580c; font-size: 1.15rem; font-weight: bold;'>฿{int(total):,}</span>**", unsafe_allow_html=True)
+                    
+                    # Requirement: เช็คบิลได้เฉพาะเมื่อเสิร์ฟครบทุกเมนูแล้วเท่านั้น
+                    if not all_items_served:
+                        st.warning(f"⚠️ เสิร์ฟแล้ว {served_items}/{total_items} เมนู (ปุ่มเช็คบิลจะเปิดเมื่อเสิร์ฟครบ)")
+                        st.button(f"🧾 เช็คบิลโต๊ะ {t_id} (รอเสิร์ฟครบ)", key=f"btn_bill_{oid}", disabled=True, use_container_width=True)
+                    else:
+                        st.success(f"🍽️ เสิร์ฟครบ {served_items}/{total_items} เมนูแล้ว พร้อมเช็คบิลค่ะ!")
+                        if st.button(f"🧾 เช็คบิล & ออกใบเสร็จอย่างย่อ (โต๊ะ {t_id})", key=f"btn_bill_{oid}", type="primary", use_container_width=True):
+                            st.session_state['active_receipt_oid'] = oid
+                            st.rerun()
+
+                    # ปุ่มเคลียร์โต๊ะรับลูกค้าใหม่
+                    st.write("")
+                    if st.button(f"🧹 เคลียร์โต๊ะ {t_id}", key=f"adm_clr_{oid}", use_container_width=True, help="ล้างสถานะเพื่อรับลูกค้าใหม่"):
+                        c.execute("UPDATE orders SET status = 'archived' WHERE table_id = ?", (t_id,))
+                        conn.commit()
+                        st.toast(f"เคลียร์โต๊ะ {t_id} เรียบร้อยแล้ว โต๊ะพร้อมรับลูกค้าใหม่!", icon="✨")
+                        st.rerun()
+
+    # Expander: ประวัติบิลที่ชำระแล้ววันนี้
+    st.write("---")
+    with st.expander("📜 ประวัติบิลที่ชำระแล้ววันนี้ (ดู/พิมพ์ใบเสร็จย้อนหลัง)", expanded=False):
+        c.execute("""
+            SELECT id, table_id, total_price, created_at, status 
+            FROM orders 
+            WHERE status IN ('paid', 'archived')
+            ORDER BY id DESC LIMIT 15
+        """)
+        past_orders = c.fetchall()
+        if not past_orders:
+            st.info("ยังไม่มีบิลที่ชำระแล้วในวันนี้ค่ะ")
+        else:
+            for p_id, p_tid, p_tot, p_time, p_st in past_orders:
+                st_p_col1, st_p_col2, st_p_col3 = st.columns([2, 1.5, 1.5])
+                st_p_col1.markdown(f"**บิล #{p_id}** — โต๊ะที่ {p_tid} (เวลา: {p_time})")
+                st_p_col2.markdown(f"**฿{int(p_tot):,}**")
+                with st_p_col3:
+                    if st.button("🧾 พิมพ์ใบเสร็จ", key=f"btn_reprint_{p_id}", use_container_width=True):
+                        st.session_state['active_receipt_oid'] = p_id
+                        st.rerun()
+                        
+    conn.close()
+
+# ==============================================================================
 # 🔴 ฝั่งร้านค้า (เคาน์เตอร์ & ครัว & รายงาน) -> https://.../?mode=admin
 # ==============================================================================
 if is_admin_mode:
@@ -372,115 +790,6 @@ if is_admin_mode:
     ])
 
     with tab_pos:
-        @st.fragment(run_every=3)
-        def render_pos_dashboard():
-            conn = sqlite3.connect(DB_NAME)
-            c = conn.cursor()
-            
-            # ตรวจจับออเดอร์ใหม่สถานะ pending ที่เพิ่งเข้ามา
-            c.execute("SELECT MAX(id) FROM orders WHERE status = 'pending'")
-            row_max = c.fetchone()
-            cur_max = row_max[0] if (row_max and row_max[0]) else 0
-            
-            if 'last_seen_pending_id' not in st.session_state:
-                st.session_state['last_seen_pending_id'] = cur_max
-            elif cur_max > st.session_state['last_seen_pending_id']:
-                st.session_state['last_seen_pending_id'] = cur_max
-                play_order_sound()
-                st.toast("🔔 มีออเดอร์ใหม่เข้ามาในครัวแล้วค่ะ!", icon="🛎️")
-                st.warning("🔔 **มีออเดอร์ใหม่เพิ่งส่งเข้ามาในครัว!** กำลังรอให้กดรับออเดอร์")
-            
-            top_c1, top_c2 = st.columns([3, 1])
-            with top_c1:
-                st.caption("⚡ ระบบอัปเดตออเดอร์อัตโนมัติแบบเรียลไทม์ทุก 3 วินาที (ไม่ต้องกดรีเฟรชหน้าเว็บ)")
-            with top_c2:
-                if st.button("🔔 ทดสอบเสียงกระดิ่ง", key="btn_test_sound", use_container_width=True):
-                    play_order_sound()
-                    st.toast("ทดสอบเสียงกระดิ่งเตือนออเดอร์แล้ว 🔔", icon="🛎️")
-
-            c.execute("SELECT COALESCE(SUM(total_price), 0), COUNT(*) FROM orders WHERE status IN ('paid', 'archived')")
-            revenue, paid_cnt = c.fetchone()
-            c.execute("SELECT COUNT(*), COUNT(DISTINCT table_id) FROM orders WHERE status NOT IN ('paid', 'archived')")
-            active_cnt, active_tables = c.fetchone()
-            
-            # Responsive Metrics: บนมือถือจะเรียง 2x2 สวยงาม
-            s1, s2, s3, s4 = st.columns(4)
-            s1.metric("💰 ยอดขายรวม", f"฿{int(revenue):,}")
-            s2.metric("🍳 กำลังปรุง", f"{active_cnt} บิล")
-            s3.metric("🪑 นั่งทาน", f"{active_tables} โต๊ะ")
-            s4.metric("✅ เช็คบิลแล้ว", f"{paid_cnt} บิล")
-            
-            st.write("---")
-            
-            c.execute('''
-                SELECT id, table_id, status, total_price, created_at 
-                FROM orders 
-                WHERE status NOT IN ('paid', 'archived')
-                ORDER BY 
-                    CASE status 
-                        WHEN 'pending' THEN 1 
-                        WHEN 'accepted' THEN 2 
-                        WHEN 'cooked' THEN 3 
-                        WHEN 'served' THEN 4 
-                    END, id ASC
-            ''')
-            orders_to_manage = c.fetchall()
-            
-            if not orders_to_manage:
-                st.success("🎉 ไม่มีออเดอร์ค้างในครัว น้องฟ้าใสพร้อมรับออเดอร์ใหม่เสมอค่ะ 🌶️")
-            else:
-                grid_cols = st.columns(3)
-                for idx, (oid, t_id, st_code, total, otime) in enumerate(orders_to_manage):
-                    with grid_cols[idx % 3]:
-                        with st.container(border=True):
-                            h1, h2 = st.columns([2, 1])
-                            h1.markdown(f"### โต๊ะที่ {t_id}")
-                            h2.caption(f"#{oid}")
-                            st.caption(f"เวลาสั่ง: {otime}")
-                            
-                            c.execute("SELECT item_name, quantity, note FROM order_items WHERE order_id = ?", (oid,))
-                            for iname, iqty, inote in c.fetchall():
-                                st.markdown(f"• **{iname}** <span style='color: #ea580c; font-weight: bold;'>x{iqty}</span>", unsafe_allow_html=True)
-                                if inote:
-                                    st.caption(f"⚠️ โน้ต: {inote}")
-                            
-                            st.markdown(f"**ยอดรวม: ฿{int(total):,}**")
-                            
-                            if st_code == 'pending':
-                                if st.button("1. ✅ กดรับออเดอร์", key=f"adm_acc_{oid}", use_container_width=True, type="primary"):
-                                    c.execute("UPDATE orders SET status = 'accepted' WHERE id = ?", (oid,))
-                                    conn.commit()
-                                    st.rerun()
-                            elif st_code == 'accepted':
-                                if st.button("2. 🍳 ทำอาหารเสร็จ", key=f"adm_cook_{oid}", use_container_width=True):
-                                    c.execute("UPDATE orders SET status = 'cooked' WHERE id = ?", (oid,))
-                                    conn.commit()
-                                    st.rerun()
-                            elif st_code == 'cooked':
-                                if st.button("3. 🍽️ นำเสิร์ฟแล้ว", key=f"adm_srv_{oid}", use_container_width=True):
-                                    c.execute("UPDATE orders SET status = 'served' WHERE id = ?", (oid,))
-                                    conn.commit()
-                                    st.rerun()
-                            elif st_code == 'served':
-                                if st.button("4. 💵 รับเงิน (ปิดบิล)", key=f"adm_pay_{oid}", use_container_width=True, type="primary"):
-                                    c.execute("UPDATE orders SET status = 'paid' WHERE id = ?", (oid,))
-                                    conn.commit()
-                                    st.rerun()
-                            
-                            b_c1, b_c2 = st.columns(2)
-                            with b_c1:
-                                if st.button(f"🧾 เช็คบิลโต๊ะ {t_id}", key=f"adm_all_{oid}", use_container_width=True):
-                                    c.execute("UPDATE orders SET status = 'paid' WHERE table_id = ?", (t_id,))
-                                    conn.commit()
-                                    st.rerun()
-                            with b_c2:
-                                if st.button(f"🧹 เคลียร์โต๊ะ {t_id}", key=f"adm_clr_{oid}", use_container_width=True, help="ล้างสถานะเพื่อรับลูกค้าใหม่"):
-                                    c.execute("UPDATE orders SET status = 'archived' WHERE table_id = ?", (t_id,))
-                                    conn.commit()
-                                    st.toast(f"เคลียร์โต๊ะ {t_id} เรียบร้อยแล้ว โต๊ะพร้อมรับลูกค้าใหม่!", icon="✨")
-                                    st.rerun()
-            conn.close()
-
         render_pos_dashboard()
 
     with tab_rep:
@@ -746,7 +1055,7 @@ else:
                     c.execute("INSERT INTO orders (table_id, status, total_price, created_at) VALUES (?, 'pending', ?, datetime('now', 'localtime'))", (current_table_num, total_cart_sum))
                     new_order_id = c.lastrowid
                     for iname, idata in st.session_state.cart.items():
-                        c.execute("INSERT INTO order_items (order_id, item_name, price, quantity, note) VALUES (?, ?, ?, ?, ?)", (new_order_id, iname, idata['price'], idata['qty'], idata['note']))
+                        c.execute("INSERT INTO order_items (order_id, item_name, price, quantity, note, status) VALUES (?, ?, ?, ?, ?, 'pending')", (new_order_id, iname, idata['price'], idata['qty'], idata['note']))
                     conn.commit()
                     st.session_state.cart = {}
                     st.success(f"🎉 ส่งออเดอร์ #{new_order_id} เรียบร้อยแล้วค่ะ!")
@@ -785,11 +1094,11 @@ else:
         conn_trk = sqlite3.connect(DB_NAME)
         c_trk = conn_trk.cursor()
         
-        # ดึงออเดอร์ล่าสุดของโต๊ะนี้
+        # ดึงออเดอร์ล่าสุดของโต๊ะนี้ที่ไม่ใช่ archived
         c_trk.execute("""
             SELECT id, status, total_price, created_at 
             FROM orders 
-            WHERE table_id = ? 
+            WHERE table_id = ? AND status != 'archived'
             ORDER BY id DESC LIMIT 5
         """, (table_num,))
         cur_orders = c_trk.fetchall()
@@ -807,13 +1116,37 @@ else:
         else:
             st_map = {
                 'pending': ('⏳ รอร้านรับออเดอร์', 'orange', 0.25, 'กำลังส่งออเดอร์เข้าจอครัว...'),
-                'accepted': ('🍳 ครัวกำลังปรุงอาหาร', 'blue', 0.55, 'แม่ครัวกำลังตั้งกระทะ ปรุงสดใหม่ค่ะ'),
-                'cooked': ('🍲 ปรุงเสร็จแล้ว รอเสิร์ฟ', 'purple', 0.85, 'อาหารปรุงเสร็จแล้ว พนักงานกำลังยกไปเสิร์ฟค่ะ'),
-                'served': ('🍽️ เสิร์ฟถึงโต๊ะแล้ว', 'green', 1.0, 'เสิร์ฟครบแล้ว ทานให้อร่อยแซ่บนัวนะคะ!'),
+                'accepted': ('🍳 ครัวกำลังปรุงอาหาร', 'blue', 0.50, 'แม่ครัวกำลังตั้งกระทะ ปรุงสดใหม่ค่ะ'),
+                'cooked': ('🍲 ปรุงเสร็จ กำลังทยอยเสิร์ฟ', 'purple', 0.75, 'อาหารปรุงเสร็จแล้ว พนักงานกำลังยกไปเสิร์ฟค่ะ'),
+                'served': ('🍽️ เสิร์ฟถึงโต๊ะครบแล้ว', 'green', 1.0, 'เสิร์ฟครบทุกเมนูแล้ว ทานให้อร่อยแซ่บนัวนะคะ!'),
                 'paid': ('✅ เช็คบิลเรียบร้อยแล้ว', 'gray', 1.0, 'ขอบคุณที่มาอุดหนุนร้านฟ้าใสตำนัวนะคะ 🙏')
             }
             for oid, status, total, otime in cur_orders:
-                label, color, prog_val, desc_status = st_map.get(status, (status, 'gray', 0.1, ''))
+                c_trk.execute("SELECT item_name, quantity, note, COALESCE(status, 'pending') FROM order_items WHERE order_id = ?", (oid,))
+                order_items_trk = c_trk.fetchall()
+                
+                total_it = len(order_items_trk)
+                served_it = sum(1 for it in order_items_trk if it[3] == 'served')
+                
+                if status == 'paid':
+                    prog_val = 1.0
+                    label, color, _, desc_status = st_map['paid']
+                elif status == 'served' or (total_it > 0 and served_it == total_it):
+                    prog_val = 1.0
+                    label, color, _, desc_status = st_map['served']
+                elif served_it > 0:
+                    prog_val = 0.5 + 0.4 * (served_it / total_it)
+                    label, color, _, desc_status = (f'🍲 กำลังทยอยเสิร์ฟ ({served_it}/{total_it})', 'purple', prog_val, 'พนักงานกำลังยกอาหารมาเสิร์ฟที่โต๊ะค่ะ')
+                elif status == 'cooked':
+                    prog_val = 0.65
+                    label, color, _, desc_status = st_map['cooked']
+                elif status == 'accepted':
+                    prog_val = 0.45
+                    label, color, _, desc_status = st_map['accepted']
+                else:
+                    prog_val = 0.25
+                    label, color, _, desc_status = st_map['pending']
+
                 with st.container(border=True):
                     c_oh1, c_oh2 = st.columns([3, 1])
                     with c_oh1:
@@ -824,12 +1157,17 @@ else:
                     
                     st.progress(prog_val)
                     
-                    with st.expander("🔍 ดูรายการอาหารในบิลนี้", expanded=(status != 'paid')):
-                        c_trk.execute("SELECT item_name, quantity, note FROM order_items WHERE order_id = ?", (oid,))
-                        for iname, iqty, inote in c_trk.fetchall():
+                    with st.expander("🔍 ดูรายการอาหาร & สถานะแต่ละจานในบิลนี้", expanded=(status != 'paid')):
+                        for iname, iqty, inote, ist in order_items_trk:
                             note_text = f" *(โน้ต: {inote})*" if inote else ""
-                            st.write(f"- **{iname}** x{iqty}{note_text}")
-        conn_trk.close()
+                            if ist == 'served':
+                                st_badge = ":green[**[✅ เสิร์ฟแล้ว]**]"
+                            elif ist == 'cooked':
+                                st_badge = ":purple[**[🍳 ปรุงเสร็จแล้ว]**]"
+                            else:
+                                st_badge = ":orange[**[⏳ กำลังปรุง]**]"
+                            st.markdown(f"• **{iname}** x{iqty}{note_text} — {st_badge}")
+            conn_trk.close()
 
     render_table_order_tracking(current_table_num)
     conn.close()
