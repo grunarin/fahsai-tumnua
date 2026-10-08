@@ -242,6 +242,18 @@ def init_db():
             note TEXT
         )
     ''')
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS tables (
+            id INTEGER PRIMARY KEY,
+            table_number INTEGER NOT NULL UNIQUE,
+            name TEXT,
+            status TEXT DEFAULT 'available'
+        )
+    ''')
+    c.execute('SELECT COUNT(*) FROM tables')
+    if c.fetchone()[0] == 0:
+        for t in range(1, 7):
+            c.execute('INSERT OR IGNORE INTO tables (table_number, name) VALUES (?, ?)', (t, f'โต๊ะที่ {t}'))
 
     fahsai_menu = [
         ("ตำปูปลาร้านัวแซ่บ", "ส้มตำ & ตำนัว", 70, 25, "https://images.unsplash.com/photo-1569058242253-92a9c755a0ec?auto=format&fit=crop&w=600&q=80", "เส้นมะละกอกรอบ พริกแห้ง น้ำปลาร้าต้มสุกสูตรฟ้าใส นัวเข้มข้นถึงใจ"),
@@ -341,7 +353,7 @@ def play_order_sound():
 # ==============================================================================
 if is_admin_mode:
     # Header ปรับขนาดอัตโนมัติตามหน้าจอ
-    head_c1, head_c2, head_c3 = st.columns([1, 4, 2])
+    head_c1, head_c2 = st.columns([1, 6])
     with head_c1:
         if os.path.exists(logo_path):
             st.image(logo_path, width=75)
@@ -350,17 +362,13 @@ if is_admin_mode:
     with head_c2:
         st.markdown("<h2 style='color: #c2410c; margin: 0;'>ร้านฟ้าใสตำนัว (ระบบจัดการหลังร้าน)</h2>", unsafe_allow_html=True)
         st.caption("👨‍🍳 หน้าจอเคาน์เตอร์คิดเงิน • ครัวปรุงอาหาร • รายงานสต็อกวัตถุดิบ")
-    with head_c3:
-        if st.button("📱 สลับไปดูลูกค้าสั่ง", use_container_width=True):
-            st.query_params.clear()
-            st.rerun()
 
     st.write("---")
 
-    tab_pos, tab_rep, tab_qr = st.tabs([
+    tab_pos, tab_rep, tab_tbl = st.tabs([
         "🍳 จอครัว & เคาน์เตอร์คิดเงิน", 
         "📊 รายงาน & วางแผนเตรียมของ", 
-        "📲 เครื่องพิมพ์ QR Code โต๊ะ"
+        "🪑 จัดการโต๊ะอาหาร & เคลียร์โต๊ะ"
     ])
 
     with tab_pos:
@@ -390,9 +398,9 @@ if is_admin_mode:
                     play_order_sound()
                     st.toast("ทดสอบเสียงกระดิ่งเตือนออเดอร์แล้ว 🔔", icon="🛎️")
 
-            c.execute("SELECT COALESCE(SUM(total_price), 0), COUNT(*) FROM orders WHERE status = 'paid'")
+            c.execute("SELECT COALESCE(SUM(total_price), 0), COUNT(*) FROM orders WHERE status IN ('paid', 'archived')")
             revenue, paid_cnt = c.fetchone()
-            c.execute("SELECT COUNT(*), COUNT(DISTINCT table_id) FROM orders WHERE status != 'paid'")
+            c.execute("SELECT COUNT(*), COUNT(DISTINCT table_id) FROM orders WHERE status NOT IN ('paid', 'archived')")
             active_cnt, active_tables = c.fetchone()
             
             # Responsive Metrics: บนมือถือจะเรียง 2x2 สวยงาม
@@ -407,7 +415,7 @@ if is_admin_mode:
             c.execute('''
                 SELECT id, table_id, status, total_price, created_at 
                 FROM orders 
-                WHERE status != 'paid'
+                WHERE status NOT IN ('paid', 'archived')
                 ORDER BY 
                     CASE status 
                         WHEN 'pending' THEN 1 
@@ -459,10 +467,18 @@ if is_admin_mode:
                                     conn.commit()
                                     st.rerun()
                             
-                            if st.button(f"🧾 เช็คบิลโต๊ะ {t_id}", key=f"adm_all_{oid}", use_container_width=True):
-                                c.execute("UPDATE orders SET status = 'paid' WHERE table_id = ?", (t_id,))
-                                conn.commit()
-                                st.rerun()
+                            b_c1, b_c2 = st.columns(2)
+                            with b_c1:
+                                if st.button(f"🧾 เช็คบิลโต๊ะ {t_id}", key=f"adm_all_{oid}", use_container_width=True):
+                                    c.execute("UPDATE orders SET status = 'paid' WHERE table_id = ?", (t_id,))
+                                    conn.commit()
+                                    st.rerun()
+                            with b_c2:
+                                if st.button(f"🧹 เคลียร์โต๊ะ {t_id}", key=f"adm_clr_{oid}", use_container_width=True, help="ล้างสถานะเพื่อรับลูกค้าใหม่"):
+                                    c.execute("UPDATE orders SET status = 'archived' WHERE table_id = ?", (t_id,))
+                                    conn.commit()
+                                    st.toast(f"เคลียร์โต๊ะ {t_id} เรียบร้อยแล้ว โต๊ะพร้อมรับลูกค้าใหม่!", icon="✨")
+                                    st.rerun()
             conn.close()
 
         render_pos_dashboard()
@@ -502,33 +518,117 @@ if is_admin_mode:
             st.info("ยังไม่มีข้อมูลการใช้วัตถุดิบในระบบ")
         conn.close()
 
-    with tab_qr:
-        st.subheader("📲 ลิงก์และ QR Code ประจำโต๊ะ (ให้ลูกค้าสแกน)")
-        st.caption("ลูกค้าสแกน QR Code แล้วจะเข้าสู่หน้าสั่งอาหารเฉพาะโต๊ะนั้นทันที")
+    with tab_tbl:
+        st.subheader("🪑 จัดการโต๊ะอาหาร & ล้างสถานะเพื่อรับลูกค้ารายใหม่")
+        st.caption("เพิ่มหรือลบจำนวนโต๊ะในร้าน และกดล้างสถานะโต๊ะเมื่อลูกค้าทานเสร็จ เพื่อให้โต๊ะว่างพร้อมรับลูกค้ารายใหม่")
         
-        base_app_url = "https://fahsai-tumnua-xwwixnezbpyxzpwvkvhad3.streamlit.app"
+        conn_tb = sqlite3.connect(DB_NAME)
+        c_tb = conn_tb.cursor()
         
-        qr_cols = st.columns(3)
-        for i in range(1, 7):
-            with qr_cols[(i-1) % 3]:
+        # ส่วนที่ 1: ล้างสถานะโต๊ะ (เคลียร์โต๊ะรับลูกค้าใหม่)
+        st.markdown("### 🧹 1. ล้างสถานะโต๊ะอาหาร (พร้อมรับลูกค้ารายใหม่)")
+        st.info("💡 การกด **'ล้างสถานะโต๊ะ'** จะทำให้หน้าจอมือถือของลูกค้ารายใหม่ที่สแกนโต๊ะนั้นเป็นหน้าว่างพร้อมสั่งอาหาร โดยยอดขายและรายงานสต็อกยังคงถูกบันทึกไว้อย่างปลอดภัย")
+        
+        c_tb.execute("""
+            SELECT t.table_number, t.name,
+                   COUNT(CASE WHEN o.status NOT IN ('paid', 'archived') THEN 1 END) as active_orders,
+                   COUNT(CASE WHEN o.status = 'paid' THEN 1 END) as paid_orders
+            FROM tables t
+            LEFT JOIN orders o ON t.table_number = o.table_id
+            GROUP BY t.table_number
+            ORDER BY t.table_number ASC
+        """)
+        table_statuses = c_tb.fetchall()
+        
+        # ปุ่มล้างทุกโต๊ะที่เช็คบิลแล้วพร้อมกัน
+        total_paid_orders = sum(r[3] for r in table_statuses)
+        if total_paid_orders > 0:
+            if st.button("🧹 ล้างสถานะทุกโต๊ะที่เช็คบิลแล้วพร้อมกันทั้งหมด", type="primary", use_container_width=True):
+                c_tb.execute("UPDATE orders SET status = 'archived' WHERE status = 'paid'")
+                conn_tb.commit()
+                st.toast("ล้างสถานะทุกโต๊ะที่เช็คบิลแล้วเรียบร้อย!", icon="✨")
+                st.rerun()
+            st.write("")
+        
+        clr_cols = st.columns(3)
+        for idx, (t_no, t_name, act_cnt, paid_cnt) in enumerate(table_statuses):
+            with clr_cols[idx % 3]:
                 with st.container(border=True):
-                    st.markdown(f"### โต๊ะที่ {i}")
-                    table_direct_url = f"{base_app_url}/?table={i}"
-                    qr_img_api = f"https://quickchart.io/qr?text={table_direct_url}&size=200"
-                    st.image(qr_img_api, width=170)
-                    st.code(table_direct_url, language="text")
+                    st.markdown(f"**🪑 {t_name}**")
+                    if act_cnt > 0:
+                        st.markdown(f"สถานะ: :orange[**มีออเดอร์ค้าง {act_cnt} บิล**]")
+                    elif paid_cnt > 0:
+                        st.markdown(f"สถานะ: :blue[**เช็คบิลแล้ว {paid_cnt} บิล (รอเคลียร์)**]")
+                    else:
+                        st.markdown(f"สถานะ: :green[**โต๊ะว่าง (พร้อมรับลูกค้า)**]")
+                        
+                    btn_type = "primary" if (paid_cnt > 0 or act_cnt > 0) else "secondary"
+                    if st.button(f"🧹 ล้างสถานะโต๊ะ {t_no}", key=f"btn_clr_tbl_{t_no}", use_container_width=True, type=btn_type):
+                        c_tb.execute("UPDATE orders SET status = 'archived' WHERE table_id = ?", (t_no,))
+                        conn_tb.commit()
+                        st.toast(f"ล้างสถานะ '{t_name}' เรียบร้อยแล้ว โต๊ะพร้อมรับลูกค้าใหม่!", icon="✨")
+                        st.rerun()
+                        
+        st.write("---")
+        
+        # ส่วนที่ 2: เพิ่ม / ลบ โต๊ะอาหาร
+        st.markdown("### ⚙️ 2. เพิ่ม / ลบ โต๊ะอาหารในร้าน")
+        t_c1, t_c2 = st.columns(2)
+        
+        existing_nums = [r[0] for r in table_statuses]
+        with t_c1:
+            with st.container(border=True):
+                st.markdown("#### ➕ เพิ่มโต๊ะใหม่")
+                next_t_num = (max(existing_nums) + 1) if existing_nums else 1
+                new_t_num = st.number_input("หมายเลขโต๊ะที่จะเพิ่ม:", min_value=1, max_value=999, value=next_t_num, step=1)
+                new_t_name = st.text_input("ชื่อเรียกโต๊ะ:", value=f"โต๊ะที่ {new_t_num}")
+                
+                if st.button("➕ ยืนยันเพิ่มโต๊ะ", key="btn_add_new_table", type="primary", use_container_width=True):
+                    if new_t_num in existing_nums:
+                        st.error(f"หมายเลขโต๊ะ {new_t_num} มีอยู่ในระบบแล้วค่ะ")
+                    else:
+                        c_tb.execute("INSERT INTO tables (table_number, name) VALUES (?, ?)", (new_t_num, new_t_name))
+                        conn_tb.commit()
+                        st.success(f"เพิ่ม '{new_t_name}' สำเร็จเรียบร้อยแล้ว!")
+                        st.rerun()
+
+        with t_c2:
+            with st.container(border=True):
+                st.markdown("#### 🗑️ ลบโต๊ะอาหาร")
+                if existing_nums:
+                    table_options = [f"โต๊ะที่ {r[0]} ({r[1]})" for r in table_statuses]
+                    table_to_del_str = st.selectbox("เลือกโต๊ะที่ต้องการลบ:", table_options)
+                    del_t_num = int(table_to_del_str.split(" ")[1])
+                    
+                    if st.button(f"🗑️ ยืนยันลบโต๊ะที่ {del_t_num}", key="btn_del_table", use_container_width=True):
+                        c_tb.execute("DELETE FROM tables WHERE table_number = ?", (del_t_num,))
+                        conn_tb.commit()
+                        st.warning(f"ลบโต๊ะที่ {del_t_num} ออกจากระบบเรียบร้อยแล้ว")
+                        st.rerun()
+                else:
+                    st.info("ไม่มีโต๊ะในระบบ")
+
+        conn_tb.close()
 
 # ==============================================================================
 # 🟢 ฝั่งลูกค้าสั่งอาหารที่โต๊ะ -> https://.../?table=1
 # ==============================================================================
 else:
     table_from_param = params.get("table", "1")
+    conn_chk = sqlite3.connect(DB_NAME)
+    c_chk = conn_chk.cursor()
+    c_chk.execute("SELECT table_number FROM tables ORDER BY table_number ASC")
+    valid_tables = [row[0] for row in c_chk.fetchall()]
+    conn_chk.close()
+    if not valid_tables:
+        valid_tables = [1]
+        
     try:
         current_table_num = int(table_from_param)
-        if current_table_num < 1 or current_table_num > 6:
-            current_table_num = 1
+        if current_table_num not in valid_tables:
+            current_table_num = valid_tables[0]
     except:
-        current_table_num = 1
+        current_table_num = valid_tables[0]
 
     # Header ลูกค้า: จัดกลางเสมอ สวยงาม ชัดเจน รองรับทุกขนาดหน้าจอ
     logo_b64 = get_base64_image(logo_path)
