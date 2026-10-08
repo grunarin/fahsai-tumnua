@@ -8,6 +8,7 @@ import struct
 import math
 import io
 from datetime import datetime, timedelta
+from urllib.parse import quote
 
 # ตั้งค่าหน้าเว็บรองรับทุกขนาดหน้าจอ
 st.set_page_config(
@@ -258,10 +259,7 @@ def init_db():
             status TEXT DEFAULT 'available'
         )
     ''')
-    c.execute('SELECT COUNT(*) FROM tables')
-    if c.fetchone()[0] == 0:
-        for t in range(1, 7):
-            c.execute('INSERT OR IGNORE INTO tables (table_number, name) VALUES (?, ?)', (t, f'โต๊ะที่ {t}'))
+    # ค่าเริ่มต้นไม่มีโต๊ะ (ร้านค้าสามารถเพิ่ม/ลบโต๊ะได้เองตามต้องการ)
 
     fahsai_menu = [
         ("ตำปูปลาร้านัวแซ่บ", "ส้มตำ & ตำนัว", 70, 25, "https://images.unsplash.com/photo-1569058242253-92a9c755a0ec?auto=format&fit=crop&w=600&q=80", "เส้นมะละกอกรอบ พริกแห้ง น้ำปลาร้าต้มสุกสูตรฟ้าใส นัวเข้มข้นถึงใจ"),
@@ -810,15 +808,11 @@ if is_admin_mode:
     ])
 
     with tab_tbl:
-        st.subheader("🪑 จัดการโต๊ะอาหาร & ล้างสถานะเพื่อรับลูกค้ารายใหม่")
-        st.caption("เพิ่มหรือลบจำนวนโต๊ะในร้าน และกดล้างสถานะโต๊ะเมื่อลูกค้าทานเสร็จ เพื่อให้โต๊ะว่างพร้อมรับลูกค้ารายใหม่")
+        st.subheader("🪑 จัดการโต๊ะอาหาร & เคลียร์โต๊ะ (พร้อมสร้าง QR-Code)")
+        st.caption("เพิ่มหรือลบโต๊ะอาหารในร้าน สร้าง QR-Code ติดโต๊ะให้ลูกค้าสแกนสั่งอาหาร และกดล้างสถานะโต๊ะเพื่อรับลูกค้ารายใหม่")
         
         conn_tb = sqlite3.connect(DB_NAME)
         c_tb = conn_tb.cursor()
-        
-        # ส่วนที่ 1: ล้างสถานะโต๊ะ (เคลียร์โต๊ะรับลูกค้าใหม่)
-        st.markdown("### 🧹 1. ล้างสถานะโต๊ะอาหาร (พร้อมรับลูกค้ารายใหม่)")
-        st.info("💡 การกด **'ล้างสถานะโต๊ะ'** จะทำให้หน้าจอมือถือของลูกค้ารายใหม่ที่สแกนโต๊ะนั้นเป็นหน้าว่างพร้อมสั่งอาหาร โดยยอดขายและรายงานสต็อกยังคงถูกบันทึกไว้อย่างปลอดภัย")
         
         c_tb.execute("""
             SELECT t.table_number, t.name,
@@ -830,65 +824,45 @@ if is_admin_mode:
             ORDER BY t.table_number ASC
         """)
         table_statuses = c_tb.fetchall()
+        existing_nums = [r[0] for r in table_statuses]
         
-        # ปุ่มล้างทุกโต๊ะที่เช็คบิลแล้วพร้อมกัน
-        total_paid_orders = sum(r[3] for r in table_statuses)
-        if total_paid_orders > 0:
-            if st.button("🧹 ล้างสถานะทุกโต๊ะที่เช็คบิลแล้วพร้อมกันทั้งหมด", type="primary", use_container_width=True):
-                c_tb.execute("UPDATE orders SET status = 'archived' WHERE status = 'paid'")
-                conn_tb.commit()
-                st.toast("ล้างสถานะทุกโต๊ะที่เช็คบิลแล้วเรียบร้อย!", icon="✨")
-                st.rerun()
-            st.write("")
+        # กล่องตั้งค่าลิงก์ร้าน (Base URL) สำหรับสร้าง QR-Code
+        default_base_url = "https://fahsai-tumnua-xwwixnezbpyxzpwvkvhad3.streamlit.app"
+        with st.expander("⚙️ ตั้งค่าลิงก์ร้านสำหรับสร้าง QR-Code (URL ปลายทาง)", expanded=False):
+            st.caption("ระบบใช้ลิงก์นี้เป็นค่าเริ่มต้นสำหรับสร้าง QR-Code ติดโต๊ะอาหาร หากรันบนโดเมนอื่นสามารถปรับแก้ได้ค่ะ")
+            custom_base_url = st.text_input("ลิงก์หน้าเว็บร้าน (Base URL):", value=st.session_state.get('base_url_qr', default_base_url), key="input_base_url_qr")
+            st.session_state['base_url_qr'] = custom_base_url.rstrip("/")
         
-        clr_cols = st.columns(3)
-        for idx, (t_no, t_name, act_cnt, paid_cnt) in enumerate(table_statuses):
-            with clr_cols[idx % 3]:
-                with st.container(border=True):
-                    st.markdown(f"**🪑 {t_name}**")
-                    if act_cnt > 0:
-                        st.markdown(f"สถานะ: :orange[**มีออเดอร์ค้าง {act_cnt} บิล**]")
-                    elif paid_cnt > 0:
-                        st.markdown(f"สถานะ: :blue[**เช็คบิลแล้ว {paid_cnt} บิล (รอเคลียร์)**]")
-                    else:
-                        st.markdown(f"สถานะ: :green[**โต๊ะว่าง (พร้อมรับลูกค้า)**]")
-                        
-                    btn_type = "primary" if (paid_cnt > 0 or act_cnt > 0) else "secondary"
-                    if st.button(f"🧹 ล้างสถานะโต๊ะ {t_no}", key=f"btn_clr_tbl_{t_no}", use_container_width=True, type=btn_type):
-                        c_tb.execute("UPDATE orders SET status = 'archived' WHERE table_id = ?", (t_no,))
-                        conn_tb.commit()
-                        st.toast(f"ล้างสถานะ '{t_name}' เรียบร้อยแล้ว โต๊ะพร้อมรับลูกค้าใหม่!", icon="✨")
-                        st.rerun()
-                        
-        st.write("---")
-        
-        # ส่วนที่ 2: เพิ่ม / ลบ โต๊ะอาหาร
-        st.markdown("### ⚙️ 2. เพิ่ม / ลบ โต๊ะอาหารในร้าน")
+        base_url_for_qr = st.session_state.get('base_url_qr', default_base_url).rstrip("/")
+
+        # ส่วนที่ 1: เมนู เพิ่ม / ลบ โต๊ะอาหารในร้าน
+        st.markdown("### ⚙️ 1. เพิ่ม / ลบ โต๊ะอาหารในร้าน")
         t_c1, t_c2 = st.columns(2)
         
-        existing_nums = [r[0] for r in table_statuses]
         with t_c1:
             with st.container(border=True):
                 st.markdown("#### ➕ เพิ่มโต๊ะใหม่")
+                st.caption("เมื่อเพิ่มแล้ว ระบบจะสร้าง QR-Code และลิงก์สั่งอาหารของโต๊ะนั้นให้ทันที")
                 next_t_num = (max(existing_nums) + 1) if existing_nums else 1
-                new_t_num = st.number_input("หมายเลขโต๊ะที่จะเพิ่ม:", min_value=1, max_value=999, value=next_t_num, step=1)
-                new_t_name = st.text_input("ชื่อเรียกโต๊ะ:", value=f"โต๊ะที่ {new_t_num}")
+                new_t_num = st.number_input("หมายเลขโต๊ะที่จะเพิ่ม:", min_value=1, max_value=999, value=next_t_num, step=1, key="add_t_num_input")
+                new_t_name = st.text_input("ชื่อเรียกโต๊ะ:", value=f"โต๊ะที่ {new_t_num}", key="add_t_name_input")
                 
-                if st.button("➕ ยืนยันเพิ่มโต๊ะ", key="btn_add_new_table", type="primary", use_container_width=True):
+                if st.button("➕ ยืนยันเพิ่มโต๊ะและสร้าง QR-Code", key="btn_add_new_table", type="primary", use_container_width=True):
                     if new_t_num in existing_nums:
                         st.error(f"หมายเลขโต๊ะ {new_t_num} มีอยู่ในระบบแล้วค่ะ")
                     else:
                         c_tb.execute("INSERT INTO tables (table_number, name) VALUES (?, ?)", (new_t_num, new_t_name))
                         conn_tb.commit()
-                        st.success(f"เพิ่ม '{new_t_name}' สำเร็จเรียบร้อยแล้ว!")
+                        st.success(f"เพิ่ม '{new_t_name}' สำเร็จ พร้อมเปิดใช้งาน QR-Code เรียบร้อยแล้วค่ะ! 🎉")
                         st.rerun()
 
         with t_c2:
             with st.container(border=True):
                 st.markdown("#### 🗑️ ลบโต๊ะอาหาร")
+                st.caption("ลบโต๊ะที่ไม่ใช้งานออกจากระบบ")
                 if existing_nums:
                     table_options = [f"โต๊ะที่ {r[0]} ({r[1]})" for r in table_statuses]
-                    table_to_del_str = st.selectbox("เลือกโต๊ะที่ต้องการลบ:", table_options)
+                    table_to_del_str = st.selectbox("เลือกโต๊ะที่ต้องการลบ:", table_options, key="select_del_t")
                     del_t_num = int(table_to_del_str.split(" ")[1])
                     
                     if st.button(f"🗑️ ยืนยันลบโต๊ะที่ {del_t_num}", key="btn_del_table", use_container_width=True):
@@ -897,9 +871,89 @@ if is_admin_mode:
                         st.warning(f"ลบโต๊ะที่ {del_t_num} ออกจากระบบเรียบร้อยแล้ว")
                         st.rerun()
                 else:
-                    st.info("ไม่มีโต๊ะในระบบ")
+                    st.info("ปัจจุบันยังไม่มีโต๊ะอาหารในระบบ")
+        
+        st.write("---")
+
+        # ส่วนที่ 2: รายการโต๊ะอาหาร & QR-Code สั่งอาหาร & เคลียร์สถานะโต๊ะ
+        st.markdown("### 📱 2. รายการโต๊ะอาหาร & QR-Code สั่งอาหาร & ล้างสถานะโต๊ะ")
+        
+        if not table_statuses:
+            st.info("ℹ️ **ขณะนี้ยังไม่มีโต๊ะอาหารในร้าน** (ค่าเริ่มต้น 0 โต๊ะ)\n\n👉 สามารถเพิ่มโต๊ะใหม่ได้ที่แบบฟอร์ม **'➕ เพิ่มโต๊ะใหม่'** ด้านบนค่ะ เมื่อเพิ่มแล้ว QR-Code สำหรับติดโต๊ะและระบบสั่งอาหารจะแสดงที่นี่ทันที ✨")
+        else:
+            total_tbls = len(table_statuses)
+            busy_tbls = sum(1 for r in table_statuses if (r[2] > 0 or r[3] > 0))
+            free_tbls = total_tbls - busy_tbls
+            
+            # สรุปภาพรวมของโต๊ะ
+            col_m1, col_m2, col_m3 = st.columns(3)
+            col_m1.metric("🪑 โต๊ะอาหารทั้งหมด", f"{total_tbls} โต๊ะ")
+            col_m2.metric("🟢 โต๊ะว่างพร้อมรับลูกค้า", f"{free_tbls} โต๊ะ")
+            col_m3.metric("🟠 มีลูกค้า / รอเคลียร์", f"{busy_tbls} โต๊ะ")
+
+            # ปุ่มล้างทุกโต๊ะที่เช็คบิลแล้วพร้อมกัน
+            total_paid_orders = sum(r[3] for r in table_statuses)
+            if total_paid_orders > 0:
+                if st.button("🧹 ล้างสถานะทุกโต๊ะที่เช็คบิลแล้วพร้อมกันทั้งหมด", type="primary", use_container_width=True):
+                    c_tb.execute("UPDATE orders SET status = 'archived' WHERE status = 'paid'")
+                    conn_tb.commit()
+                    st.toast("ล้างสถานะทุกโต๊ะที่เช็คบิลแล้วเรียบร้อย!", icon="✨")
+                    st.rerun()
+                st.write("")
+
+            st.caption("💡 แนะนำ: พิมพ์หรือเปิดภาพ **QR-Code** ด้านล่างนี้ไปติดไว้ที่โต๊ะอาหาร ลูกค้าสแกนเพื่อเปิดเมนูสั่งอาหารได้ทันที")
+            
+            clr_cols = st.columns(3)
+            for idx, (t_no, t_name, act_cnt, paid_cnt) in enumerate(table_statuses):
+                with clr_cols[idx % 3]:
+                    with st.container(border=True):
+                        # หัวการ์ดโต๊ะ
+                        st.markdown(f"#### 🪑 {t_name}")
+                        st.caption(f"หมายเลขโต๊ะ: #{t_no}")
+                        
+                        # สถานะโต๊ะ
+                        if act_cnt > 0:
+                            st.markdown(f"สถานะ: :orange[**มีออเดอร์ค้าง {act_cnt} บิล (กำลังทำ/รอเสิร์ฟ)**]")
+                        elif paid_cnt > 0:
+                            st.markdown(f"สถานะ: :blue[**เช็คบิลแล้ว {paid_cnt} บิล (รอเคลียร์โต๊ะ)**]")
+                        else:
+                            st.markdown(f"สถานะ: :green[**โต๊ะว่าง (พร้อมรับลูกค้า)**]")
+
+                        # ลิงก์สำหรับลูกค้าโต๊ะนี้
+                        cust_table_url = f"{base_url_for_qr}/?table={t_no}"
+                        qr_image_url = f"https://api.qrserver.com/v1/create-qr-code/?size=250x250&data={quote(cust_table_url)}&margin=10"
+                        
+                        # แสดงภาพ QR Code
+                        st.image(qr_image_url, caption=f"QR-Code สั่งอาหาร {t_name}", use_container_width=True)
+                        
+                        # ลิงก์ตรงเปิดหน้าสั่งอาหาร
+                        st.markdown(f"""
+                        <div style="text-align: center; margin-bottom: 8px;">
+                            <a href="{cust_table_url}" target="_blank" style="display: inline-block; background: #fff7ed; color: #ea580c; border: 1.5px solid #fdba74; padding: 4px 12px; border-radius: 6px; font-weight: 600; text-decoration: none; font-size: 0.85rem;">
+                                🔗 เปิดหน้าสั่งอาหารโต๊ะนี้ (ทดสอบ)
+                            </a>
+                        </div>
+                        """, unsafe_allow_html=True)
+                        
+                        # ปุ่มล้างสถานะโต๊ะเพื่อรับลูกค้าใหม่
+                        btn_type = "primary" if (paid_cnt > 0 or act_cnt > 0) else "secondary"
+                        if st.button(f"🧹 ล้างสถานะโต๊ะ {t_no} (รับลูกค้าใหม่)", key=f"btn_clr_tbl_{t_no}", use_container_width=True, type=btn_type):
+                            c_tb.execute("UPDATE orders SET status = 'archived' WHERE table_id = ?", (t_no,))
+                            conn_tb.commit()
+                            st.toast(f"ล้างสถานะ '{t_name}' เรียบร้อยแล้ว โต๊ะพร้อมรับลูกค้าใหม่!", icon="✨")
+                            st.rerun()
+
+                        # ปุ่มลบโต๊ะ
+                        with st.popover(f"🗑️ ลบ {t_name}"):
+                            st.markdown(f"ยืนยันการลบ **{t_name}** ออกจากระบบ?")
+                            if st.button(f"ยืนยันลบโต๊ะ {t_no}", key=f"btn_pop_del_{t_no}", type="primary", use_container_width=True):
+                                c_tb.execute("DELETE FROM tables WHERE table_number = ?", (t_no,))
+                                conn_tb.commit()
+                                st.warning(f"ลบ {t_name} เรียบร้อยแล้วค่ะ")
+                                st.rerun()
 
         conn_tb.close()
+
 
     with tab_pos:
         render_pos_dashboard()
@@ -1034,23 +1088,17 @@ if is_admin_mode:
 # 🟢 ฝั่งลูกค้าสั่งอาหารที่โต๊ะ -> https://.../?table=1
 # ==============================================================================
 else:
-    table_from_param = params.get("table", "1")
+    table_from_param = params.get("table", None)
     conn_chk = sqlite3.connect(DB_NAME)
     c_chk = conn_chk.cursor()
-    c_chk.execute("SELECT table_number FROM tables ORDER BY table_number ASC")
-    valid_tables = [row[0] for row in c_chk.fetchall()]
+    c_chk.execute("SELECT table_number, name FROM tables ORDER BY table_number ASC")
+    valid_tables_data = c_chk.fetchall()
     conn_chk.close()
-    if not valid_tables:
-        valid_tables = [1]
-        
-    try:
-        current_table_num = int(table_from_param)
-        if current_table_num not in valid_tables:
-            current_table_num = valid_tables[0]
-    except:
-        current_table_num = valid_tables[0]
+    
+    valid_tables = [row[0] for row in valid_tables_data]
+    table_names_map = {row[0]: row[1] for row in valid_tables_data}
 
-    # Header ลูกค้า: จัดกลางเสมอ สวยงาม ชัดเจน รองรับทุกขนาดหน้าจอ
+    # Header โลโก้ลูกค้า: จัดกลางเสมอ สวยงาม ชัดเจน รองรับทุกขนาดหน้าจอ
     logo_b64 = get_base64_image(logo_path)
     if logo_b64:
         logo_html = f'''<div style="text-align: center; margin-bottom: 6px;">
@@ -1060,6 +1108,39 @@ else:
         </div>'''
     else:
         logo_html = '<div style="text-align: center; font-size: 55px; margin-bottom: 4px;">🌶️</div>'
+
+    # กรณีทางร้านยังไม่ได้เปิดโต๊ะใดๆ
+    if not valid_tables:
+        header_html = f'''
+        {logo_html}
+        <h1 style="text-align: center; color: #c2410c; font-weight: 800; font-size: 2.25rem; margin: 2px 0 0 0; letter-spacing: -0.5px; line-height: 1.2;">
+            ฟ้าใสตำนัว
+        </h1>
+        <p style="text-align: center; color: #78716c; font-size: 0.95rem; margin: 0 0 10px 0;">
+            ส้มตำ ยำ ลาบ ย่าง แซ่บนัว สดใหม่ทุกครก 🌶️
+        </p>
+        '''
+        st.markdown(header_html, unsafe_allow_html=True)
+        st.write("---")
+        st.warning("⚠️ ขณะนี้ทางร้านยังไม่ได้เปิดโต๊ะอาหารในระบบ")
+        st.info("กรุณาติดต่อพนักงานที่เคาน์เตอร์ หรือเปิดโต๊ะในระบบหลังร้านก่อนนะคะ 🌶️")
+        st.markdown("<div style='text-align: center; margin-top: 15px;'><a href='?mode=admin' style='color: #ea580c; text-decoration: none; font-weight: bold;'>⚙️ ไปที่ระบบจัดการหลังร้าน</a></div>", unsafe_allow_html=True)
+        st.stop()
+        valid_tables = [1]
+
+    current_table_num = None
+    if table_from_param is not None:
+        try:
+            p_val = int(table_from_param)
+            if p_val in valid_tables:
+                current_table_num = p_val
+        except:
+            pass
+            
+    if current_table_num is None:
+        current_table_num = valid_tables[0]
+        
+    current_table_name = table_names_map.get(current_table_num, f"โต๊ะที่ {current_table_num}")
 
     header_html = f'''
     {logo_html}
@@ -1071,12 +1152,13 @@ else:
     </p>
     <div style="text-align: center; margin: 6px 0 16px 0;">
         <div style="display: inline-block; background: linear-gradient(135deg, #ea580c, #c2410c); color: white; padding: 7px 30px; border-radius: 6px; font-size: 1.3rem; font-weight: 700; box-shadow: 0 4px 12px rgba(234, 88, 12, 0.35); letter-spacing: 0.5px;">
-            🪑 โต๊ะที่ {current_table_num}
+            🪑 {current_table_name}
         </div>
     </div>
     '''
     st.markdown(header_html, unsafe_allow_html=True)
     st.write("---")
+
 
     # ฟังก์ชัน Callback สำหรับจัดการตะกร้าแบบเรียลไทม์ (Instant & Stable)
     def add_to_cart_item(item_name, item_price):
