@@ -105,22 +105,48 @@ img {
 }
 
 /* 🔶 ปุ่มเลือกหมวดหมู่อาหาร ให้เป็นปุ่มทรงเหลี่ยมชัดเจน (Crisp Rectangular Category Buttons) */
-div[data-testid="stRadio"] {
+div[data-testid="stPills"], div[data-testid="stRadio"] {
     display: flex !important;
     justify-content: center !important;
     width: 100% !important;
     margin: 4px 0 14px 0 !important;
 }
-div[data-testid="stRadio"] > div[role="radiogroup"] {
+div[data-testid="stPills"] > div, div[data-testid="stRadio"] > div[role="radiogroup"] {
     display: flex !important;
     flex-wrap: wrap !important;
     gap: 8px !important;
     justify-content: center !important;
     width: 100% !important;
 }
+
+/* สไตล์สำหรับ st.pills */
+div[data-testid="stPills"] button {
+    border-radius: 4px !important; /* ปรับเป็นทรงเหลี่ยมชัดเจน */
+    border: 2px solid #ea580c !important;
+    background-color: #ffffff !important;
+    color: #431407 !important;
+    padding: 8px 18px !important;
+    font-weight: 600 !important;
+    font-size: 15px !important;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05) !important;
+    transition: all 0.15s ease-in-out !important;
+}
+div[data-testid="stPills"] button:hover {
+    background-color: #ffedd5 !important;
+    border-color: #c2410c !important;
+}
+div[data-testid="stPills"] button[aria-selected="true"],
+div[data-testid="stPills"] button[data-checked="true"] {
+    background-color: #ea580c !important;
+    color: #ffffff !important;
+    border-color: #9a3412 !important;
+    box-shadow: 0 4px 10px rgba(234, 88, 12, 0.35) !important;
+}
+
+/* สไตล์ fallback สำหรับ stRadio โดยไม่ปิดกั้นการคลิก */
 div[data-testid="stRadio"] label[data-baseweb="radio"] {
-    border-radius: 4px !important; /* ปรับเป็นทรงเหลี่ยมชัดเจน ไม่มีมุมโค้งมน */
-    border: 2px solid #ea580c !important; /* ขอบเหลี่ยมสีส้มสด */
+    border-radius: 4px !important;
+    border: 2px solid #ea580c !important;
     background-color: #ffffff !important;
     padding: 8px 18px !important;
     cursor: pointer !important;
@@ -132,11 +158,16 @@ div[data-testid="stRadio"] label[data-baseweb="radio"]:hover {
     background-color: #ffedd5 !important;
     border-color: #c2410c !important;
 }
-/* ซ่อนวงกลม radio เดิมออก ให้เป็นปุ่มเหลี่ยมเต็มตัว */
-div[data-testid="stRadio"] label[data-baseweb="radio"] > div:first-child {
+div[data-testid="stRadio"] label[data-baseweb="radio"] svg {
     display: none !important;
 }
-/* ฟอนต์ตัวหนังสือในปุ่มหมวดหมู่ */
+div[data-testid="stRadio"] label[data-baseweb="radio"] input {
+    opacity: 0 !important;
+    position: absolute !important;
+    width: 0 !important;
+    height: 0 !important;
+    pointer-events: none !important;
+}
 div[data-testid="stRadio"] label[data-baseweb="radio"] p,
 div[data-testid="stRadio"] label[data-baseweb="radio"] span,
 div[data-testid="stRadio"] label[data-baseweb="radio"] div {
@@ -144,7 +175,6 @@ div[data-testid="stRadio"] label[data-baseweb="radio"] div {
     font-weight: 600 !important;
     color: #431407 !important;
 }
-/* เมื่อปุ่มหมวดหมู่ถูกกดเลือก (Active / Selected) ทรงเหลี่ยมสีส้มชัดเจน */
 div[data-testid="stRadio"] label[data-baseweb="radio"]:has(input:checked),
 div[data-testid="stRadio"] label[data-baseweb="radio"][aria-checked="true"] {
     background-color: #ea580c !important;
@@ -528,17 +558,57 @@ else:
     st.markdown(header_html, unsafe_allow_html=True)
     st.write("---")
 
+    # ฟังก์ชัน Callback สำหรับจัดการตะกร้าแบบเรียลไทม์ (Instant & Stable)
+    def add_to_cart_item(item_name, item_price):
+        if 'cart' not in st.session_state:
+            st.session_state.cart = {}
+        if item_name in st.session_state.cart:
+            st.session_state.cart[item_name]['qty'] += 1
+        else:
+            st.session_state.cart[item_name] = {'price': item_price, 'qty': 1, 'note': ''}
+
+    def dec_from_cart_item(item_name):
+        if 'cart' in st.session_state and item_name in st.session_state.cart:
+            if st.session_state.cart[item_name]['qty'] > 1:
+                st.session_state.cart[item_name]['qty'] -= 1
+            else:
+                del st.session_state.cart[item_name]
+
+    def del_from_cart_item(item_name):
+        if 'cart' in st.session_state and item_name in st.session_state.cart:
+            del st.session_state.cart[item_name]
+
     if 'cart' not in st.session_state:
         st.session_state.cart = {}
 
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
-    c.execute('SELECT id, name, category, price, image, description FROM menu_items')
+    c.execute('''
+        SELECT id, name, category, price, image, description 
+        FROM menu_items 
+        ORDER BY 
+            CASE category 
+                WHEN 'ส้มตำ & ตำนัว' THEN 1 
+                WHEN 'ย่าง & ทอด & ลาบ' THEN 2 
+                WHEN 'ต้ม & ซดร้อน' THEN 3 
+                WHEN 'ข้าว & เครื่องเคียง' THEN 4 
+                WHEN 'เครื่องดื่ม & หวาน' THEN 5 
+                ELSE 6 
+            END, id ASC
+    ''')
     all_menus = c.fetchall()
-    categories = sorted(list(set(m[2] for m in all_menus)))
+    
+    cat_order_list = ["ส้มตำ & ตำนัว", "ย่าง & ทอด & ลาบ", "ต้ม & ซดร้อน", "ข้าว & เครื่องเคียง", "เครื่องดื่ม & หวาน"]
+    available_cats = list(set(m[2] for m in all_menus))
+    categories = [cat for cat in cat_order_list if cat in available_cats]
+    for cat in available_cats:
+        if cat not in categories:
+            categories.append(cat)
     
     st.markdown("<p style='text-align: center; font-weight: 600; color: #44403c; margin-bottom: 4px; font-size: 1.05rem;'>🍽️ เลือกหมวดหมู่อาหาร</p>", unsafe_allow_html=True)
-    sel_cat = st.radio("เลือกหมวดหมู่อาหาร:", ["ทั้งหมด"] + categories, horizontal=True, label_visibility="collapsed")
+    sel_cat = st.pills("เลือกหมวดหมู่อาหาร:", ["ทั้งหมด"] + categories, default="ทั้งหมด", key="pills_cat_sel", label_visibility="collapsed")
+    if not sel_cat:
+        sel_cat = "ทั้งหมด"
     
     # คำนวณยอดตะกร้า
     total_cart_qty = sum(item['qty'] for item in st.session_state.cart.values())
@@ -558,22 +628,13 @@ else:
                         # แถวปุ่มปรับจำนวน: ➖ | ตัวเลขจำนวน | ➕ | 🗑️ ลบ
                         c_minus, c_num, c_plus, c_del = st.columns([1, 1.2, 1, 1.2])
                         with c_minus:
-                            if st.button("➖", key=f"cart_dec_{item_name}", use_container_width=True):
-                                if data['qty'] > 1:
-                                    st.session_state.cart[item_name]['qty'] -= 1
-                                else:
-                                    del st.session_state.cart[item_name]
-                                st.rerun()
+                            st.button("➖", key=f"cart_dec_{item_name}", on_click=dec_from_cart_item, args=(item_name,), use_container_width=True)
                         with c_num:
                             st.markdown(f"<div style='text-align: center; font-size: 1.25rem; font-weight: 700; line-height: 42px; background: #fff7ed; border-radius: 6px; border: 1.5px solid #fdba74; color: #c2410c;'>{data['qty']}</div>", unsafe_allow_html=True)
                         with c_plus:
-                            if st.button("➕", key=f"cart_inc_{item_name}", use_container_width=True):
-                                st.session_state.cart[item_name]['qty'] += 1
-                                st.rerun()
+                            st.button("➕", key=f"cart_inc_{item_name}", on_click=add_to_cart_item, args=(item_name, data['price']), use_container_width=True)
                         with c_del:
-                            if st.button("🗑️ ลบ", key=f"cart_rem_{item_name}", use_container_width=True):
-                                del st.session_state.cart[item_name]
-                                st.rerun()
+                            st.button("🗑️ ลบ", key=f"cart_rem_{item_name}", on_click=del_from_cart_item, args=(item_name,), use_container_width=True)
                                 
                         st.caption(f"รวมย่อย: ฿{int(subtotal):,}")
                         note = st.text_input("โน้ตพิเศษ (เช่น เผ็ดน้อย/ไม่ใส่ชูรส):", value=data['note'], key=f"cart_note_{item_name}", placeholder="ระบุความต้องการ...")
@@ -591,29 +652,30 @@ else:
                     st.success(f"🎉 ส่งออเดอร์ #{new_order_id} เรียบร้อยแล้วค่ะ!")
                     st.rerun()
 
-    # แสดงรายการเมนูอาหาร แถวการ์ดแนวนอนมาตรฐานแอปสั่งอาหาร (กดได้ทุกรายการ ไม่ชน ไม่เบียด)
+    # แสดงรายการเมนูอาหาร แถวการ์ดแนวนอน (กดได้ทุกรายการ พร้อม Stepper ➖/➕ บนการ์ดโดยตรง)
     filtered_menus = all_menus if sel_cat == "ทั้งหมด" else [m for m in all_menus if m[2] == sel_cat]
     
-    for idx, (m_id, name, cat, price, img, desc) in enumerate(filtered_menus):
+    for m_id, name, cat, price, img, desc in filtered_menus:
         with st.container(border=True):
-            mc_img, mc_info, mc_btn = st.columns([1.2, 3.2, 1.4])
+            mc_img, mc_info, mc_btn = st.columns([1.2, 3.2, 1.6])
             with mc_img:
                 st.image(img, use_container_width=True)
             with mc_info:
                 st.markdown(f"**{name}**")
                 st.caption(desc)
-                st.markdown(f"<span style='color: #ea580c; font-weight: bold; font-size: 1.1rem;'>฿{int(price)}</span>", unsafe_allow_html=True)
+                st.markdown(f"<span style='color: #ea580c; font-weight: bold; font-size: 1.15rem;'>฿{int(price)}</span>", unsafe_allow_html=True)
             with mc_btn:
                 cur_qty = st.session_state.cart.get(name, {}).get('qty', 0)
-                if cur_qty > 0:
-                    st.markdown(f"<div style='text-align: center; color: #ea580c; font-weight: bold; font-size: 13px; margin-bottom: 2px;'>ในตะกร้า: {cur_qty}</div>", unsafe_allow_html=True)
-                if st.button("➕ เพิ่ม", key=f"btn_add_menu_{m_id}_{idx}", use_container_width=True, type="primary" if cur_qty > 0 else "secondary"):
-                    if name in st.session_state.cart:
-                        st.session_state.cart[name]['qty'] += 1
-                    else:
-                        st.session_state.cart[name] = {'price': price, 'qty': 1, 'note': ''}
-                    st.toast(f"เพิ่ม '{name}' ลงตะกร้าแล้ว!", icon="🍲")
-                    st.rerun()
+                if cur_qty == 0:
+                    st.button("➕ เพิ่ม", key=f"btn_add_menu_{m_id}", on_click=add_to_cart_item, args=(name, price), use_container_width=True)
+                else:
+                    c_m, c_q, c_p = st.columns([1, 1, 1])
+                    with c_m:
+                        st.button("➖", key=f"btn_dec_card_{m_id}", on_click=dec_from_cart_item, args=(name,), use_container_width=True)
+                    with c_q:
+                        st.markdown(f"<div style='text-align: center; font-weight: 700; line-height: 42px; color: #ea580c; font-size: 1.15rem;'>{cur_qty}</div>", unsafe_allow_html=True)
+                    with c_p:
+                        st.button("➕", key=f"btn_inc_card_{m_id}", on_click=add_to_cart_item, args=(name, price), use_container_width=True, type="primary")
 
     # ตรวจสอบสถานะอาหารที่สั่งไปแล้วของโต๊ะนี้
     st.write("---")
