@@ -2,6 +2,10 @@ import streamlit as st
 import sqlite3
 import os
 import base64
+import wave
+import struct
+import math
+import io
 from datetime import datetime, timedelta
 
 # ตั้งค่าหน้าเว็บรองรับทุกขนาดหน้าจอ
@@ -268,6 +272,40 @@ def get_base64_image(image_path):
             return base64.b64encode(img_file.read()).decode()
     return ""
 
+@st.cache_data
+def get_bell_sound_b64():
+    sample_rate = 22050
+    duration = 0.85
+    n_samples = int(sample_rate * duration)
+    buf = io.BytesIO()
+    with wave.open(buf, 'wb') as wav_file:
+        wav_file.setnchannels(1)
+        wav_file.setsampwidth(2)
+        wav_file.setframerate(sample_rate)
+        for i in range(n_samples):
+            t = i / sample_rate
+            decay = math.exp(-4.2 * t)
+            v1 = math.sin(2 * math.pi * 784.0 * t)
+            v2 = math.sin(2 * math.pi * 1046.5 * t) if t > 0.08 else 0
+            sample = int(32767 * 0.45 * (v1 * 0.55 + v2 * 0.45) * decay)
+            wav_file.writeframes(struct.pack('<h', sample))
+    return base64.b64encode(buf.getvalue()).decode()
+
+def play_order_sound():
+    sound_b64 = get_bell_sound_b64()
+    audio_html = f'''
+    <audio autoplay style="display:none;">
+        <source src="data:audio/wav;base64,{sound_b64}" type="audio/wav">
+    </audio>
+    <script>
+    try {{
+        const snd = new Audio("data:audio/wav;base64,{sound_b64}");
+        snd.play().catch(e => {{ console.log("Audio waiting for gesture:", e); }});
+    }} catch(e) {{}}
+    </script>
+    '''
+    st.markdown(audio_html, unsafe_allow_html=True)
+
 # ==============================================================================
 # 🔴 ฝั่งร้านค้า (เคาน์เตอร์ & ครัว & รายงาน) -> https://.../?mode=admin
 # ==============================================================================
@@ -296,85 +334,108 @@ if is_admin_mode:
     ])
 
     with tab_pos:
-        conn = sqlite3.connect(DB_NAME)
-        c = conn.cursor()
-        
-        c.execute("SELECT COALESCE(SUM(total_price), 0), COUNT(*) FROM orders WHERE status = 'paid'")
-        revenue, paid_cnt = c.fetchone()
-        c.execute("SELECT COUNT(*), COUNT(DISTINCT table_id) FROM orders WHERE status != 'paid'")
-        active_cnt, active_tables = c.fetchone()
-        
-        # Responsive Metrics: บนมือถือจะเรียง 2x2 สวยงาม
-        s1, s2, s3, s4 = st.columns(4)
-        s1.metric("💰 ยอดขายรวม", f"฿{int(revenue):,}")
-        s2.metric("🍳 กำลังปรุง", f"{active_cnt} บิล")
-        s3.metric("🪑 นั่งทาน", f"{active_tables} โต๊ะ")
-        s4.metric("✅ เช็คบิลแล้ว", f"{paid_cnt} บิล")
-        
-        st.write("---")
-        
-        c.execute('''
-            SELECT id, table_id, status, total_price, created_at 
-            FROM orders 
-            WHERE status != 'paid'
-            ORDER BY 
-                CASE status 
-                    WHEN 'pending' THEN 1 
-                    WHEN 'accepted' THEN 2 
-                    WHEN 'cooked' THEN 3 
-                    WHEN 'served' THEN 4 
-                END, id ASC
-        ''')
-        orders_to_manage = c.fetchall()
-        
-        if not orders_to_manage:
-            st.success("🎉 ไม่มีออเดอร์ค้างในครัว น้องฟ้าใสพร้อมรับออเดอร์ใหม่เสมอค่ะ 🌶️")
-        else:
-            # ใช้ Responsive 3 คอลัมน์ (บนมือถือจะ wrap ลงมาอัตโนมัติ)
-            grid_cols = st.columns(3)
-            for idx, (oid, t_id, st_code, total, otime) in enumerate(orders_to_manage):
-                with grid_cols[idx % 3]:
-                    with st.container(border=True):
-                        h1, h2 = st.columns([2, 1])
-                        h1.markdown(f"### โต๊ะที่ {t_id}")
-                        h2.caption(f"#{oid}")
-                        st.caption(f"เวลาสั่ง: {otime}")
-                        
-                        c.execute("SELECT item_name, quantity, note FROM order_items WHERE order_id = ?", (oid,))
-                        for iname, iqty, inote in c.fetchall():
-                            st.markdown(f"• **{iname}** <span style='color: #ea580c; font-weight: bold;'>x{iqty}</span>", unsafe_allow_html=True)
-                            if inote:
-                                st.caption(f"⚠️ โน้ต: {inote}")
-                        
-                        st.markdown(f"**ยอดรวม: ฿{int(total)}**")
-                        
-                        # ปุ่มกดสเต็ปการทำงาน
-                        if st_code == 'pending':
-                            if st.button("1. ✅ กดรับออเดอร์", key=f"adm_acc_{oid}", use_container_width=True, type="primary"):
-                                c.execute("UPDATE orders SET status = 'accepted' WHERE id = ?", (oid,))
+        @st.fragment(run_every=3)
+        def render_pos_dashboard():
+            conn = sqlite3.connect(DB_NAME)
+            c = conn.cursor()
+            
+            # ตรวจจับออเดอร์ใหม่สถานะ pending ที่เพิ่งเข้ามา
+            c.execute("SELECT MAX(id) FROM orders WHERE status = 'pending'")
+            row_max = c.fetchone()
+            cur_max = row_max[0] if (row_max and row_max[0]) else 0
+            
+            if 'last_seen_pending_id' not in st.session_state:
+                st.session_state['last_seen_pending_id'] = cur_max
+            elif cur_max > st.session_state['last_seen_pending_id']:
+                st.session_state['last_seen_pending_id'] = cur_max
+                play_order_sound()
+                st.toast("🔔 มีออเดอร์ใหม่เข้ามาในครัวแล้วค่ะ!", icon="🛎️")
+                st.warning("🔔 **มีออเดอร์ใหม่เพิ่งส่งเข้ามาในครัว!** กำลังรอให้กดรับออเดอร์")
+            
+            top_c1, top_c2 = st.columns([3, 1])
+            with top_c1:
+                st.caption("⚡ ระบบอัปเดตออเดอร์อัตโนมัติแบบเรียลไทม์ทุก 3 วินาที (ไม่ต้องกดรีเฟรชหน้าเว็บ)")
+            with top_c2:
+                if st.button("🔔 ทดสอบเสียงกระดิ่ง", key="btn_test_sound", use_container_width=True):
+                    play_order_sound()
+                    st.toast("ทดสอบเสียงกระดิ่งเตือนออเดอร์แล้ว 🔔", icon="🛎️")
+
+            c.execute("SELECT COALESCE(SUM(total_price), 0), COUNT(*) FROM orders WHERE status = 'paid'")
+            revenue, paid_cnt = c.fetchone()
+            c.execute("SELECT COUNT(*), COUNT(DISTINCT table_id) FROM orders WHERE status != 'paid'")
+            active_cnt, active_tables = c.fetchone()
+            
+            # Responsive Metrics: บนมือถือจะเรียง 2x2 สวยงาม
+            s1, s2, s3, s4 = st.columns(4)
+            s1.metric("💰 ยอดขายรวม", f"฿{int(revenue):,}")
+            s2.metric("🍳 กำลังปรุง", f"{active_cnt} บิล")
+            s3.metric("🪑 นั่งทาน", f"{active_tables} โต๊ะ")
+            s4.metric("✅ เช็คบิลแล้ว", f"{paid_cnt} บิล")
+            
+            st.write("---")
+            
+            c.execute('''
+                SELECT id, table_id, status, total_price, created_at 
+                FROM orders 
+                WHERE status != 'paid'
+                ORDER BY 
+                    CASE status 
+                        WHEN 'pending' THEN 1 
+                        WHEN 'accepted' THEN 2 
+                        WHEN 'cooked' THEN 3 
+                        WHEN 'served' THEN 4 
+                    END, id ASC
+            ''')
+            orders_to_manage = c.fetchall()
+            
+            if not orders_to_manage:
+                st.success("🎉 ไม่มีออเดอร์ค้างในครัว น้องฟ้าใสพร้อมรับออเดอร์ใหม่เสมอค่ะ 🌶️")
+            else:
+                grid_cols = st.columns(3)
+                for idx, (oid, t_id, st_code, total, otime) in enumerate(orders_to_manage):
+                    with grid_cols[idx % 3]:
+                        with st.container(border=True):
+                            h1, h2 = st.columns([2, 1])
+                            h1.markdown(f"### โต๊ะที่ {t_id}")
+                            h2.caption(f"#{oid}")
+                            st.caption(f"เวลาสั่ง: {otime}")
+                            
+                            c.execute("SELECT item_name, quantity, note FROM order_items WHERE order_id = ?", (oid,))
+                            for iname, iqty, inote in c.fetchall():
+                                st.markdown(f"• **{iname}** <span style='color: #ea580c; font-weight: bold;'>x{iqty}</span>", unsafe_allow_html=True)
+                                if inote:
+                                    st.caption(f"⚠️ โน้ต: {inote}")
+                            
+                            st.markdown(f"**ยอดรวม: ฿{int(total):,}**")
+                            
+                            if st_code == 'pending':
+                                if st.button("1. ✅ กดรับออเดอร์", key=f"adm_acc_{oid}", use_container_width=True, type="primary"):
+                                    c.execute("UPDATE orders SET status = 'accepted' WHERE id = ?", (oid,))
+                                    conn.commit()
+                                    st.rerun()
+                            elif st_code == 'accepted':
+                                if st.button("2. 🍳 ทำอาหารเสร็จ", key=f"adm_cook_{oid}", use_container_width=True):
+                                    c.execute("UPDATE orders SET status = 'cooked' WHERE id = ?", (oid,))
+                                    conn.commit()
+                                    st.rerun()
+                            elif st_code == 'cooked':
+                                if st.button("3. 🍽️ นำเสิร์ฟแล้ว", key=f"adm_srv_{oid}", use_container_width=True):
+                                    c.execute("UPDATE orders SET status = 'served' WHERE id = ?", (oid,))
+                                    conn.commit()
+                                    st.rerun()
+                            elif st_code == 'served':
+                                if st.button("4. 💵 รับเงิน (ปิดบิล)", key=f"adm_pay_{oid}", use_container_width=True, type="primary"):
+                                    c.execute("UPDATE orders SET status = 'paid' WHERE id = ?", (oid,))
+                                    conn.commit()
+                                    st.rerun()
+                            
+                            if st.button(f"🧾 เช็คบิลโต๊ะ {t_id}", key=f"adm_all_{oid}", use_container_width=True):
+                                c.execute("UPDATE orders SET status = 'paid' WHERE table_id = ?", (t_id,))
                                 conn.commit()
                                 st.rerun()
-                        elif st_code == 'accepted':
-                            if st.button("2. 🍳 ทำอาหารเสร็จ", key=f"adm_cook_{oid}", use_container_width=True):
-                                c.execute("UPDATE orders SET status = 'cooked' WHERE id = ?", (oid,))
-                                conn.commit()
-                                st.rerun()
-                        elif st_code == 'cooked':
-                            if st.button("3. 🍽️ นำเสิร์ฟแล้ว", key=f"adm_srv_{oid}", use_container_width=True):
-                                c.execute("UPDATE orders SET status = 'served' WHERE id = ?", (oid,))
-                                conn.commit()
-                                st.rerun()
-                        elif st_code == 'served':
-                            if st.button("4. 💵 รับเงิน (ปิดบิล)", key=f"adm_pay_{oid}", use_container_width=True, type="primary"):
-                                c.execute("UPDATE orders SET status = 'paid' WHERE id = ?", (oid,))
-                                conn.commit()
-                                st.rerun()
-                        
-                        if st.button(f"🧾 เช็คบิลโต๊ะ {t_id}", key=f"adm_all_{oid}", use_container_width=True):
-                            c.execute("UPDATE orders SET status = 'paid' WHERE table_id = ?", (t_id,))
-                            conn.commit()
-                            st.rerun()
-        conn.close()
+            conn.close()
+
+        render_pos_dashboard()
 
     with tab_rep:
         st.subheader("📊 ตารางวางแผนเตรียมวัตถุดิบอาหารล่วงหน้า (+15% Buffer)")
@@ -488,53 +549,71 @@ else:
         with st.container(border=True):
             st.markdown(f"<div style='text-align: center; font-size: 1.15rem; font-weight: 700; color: #1c1917; margin-bottom: 8px;'>🛒 ในตะกร้า: <span style='color: #ea580c;'>{total_cart_qty} รายการ</span> | รวม <span style='color: #ea580c;'>฿{int(total_cart_sum):,}</span></div>", unsafe_allow_html=True)
             with st.popover("👀 ดูตะกร้า & ยืนยันสั่งอาหาร", use_container_width=True):
-                    st.markdown(f"### 🛒 ตะกร้าอาหาร (โต๊ะ {current_table_num})")
-                    for item_name, data in list(st.session_state.cart.items()):
-                        subtotal = data['price'] * data['qty']
-                        st.markdown(f"**{item_name}** (฿{int(data['price'])} x {data['qty']} = ฿{int(subtotal)})")
-                        p1, p2 = st.columns([3, 1])
-                        with p1:
-                            note = st.text_input("โน้ตพิเศษ:", value=data['note'], key=f"pop_note_{item_name}", placeholder="เผ็ดน้อย/ไม่พริก")
-                            st.session_state.cart[item_name]['note'] = note
-                        with p2:
-                            if st.button("ลบ", key=f"pop_del_{item_name}"):
+                st.markdown(f"### 🛒 ตะกร้าอาหาร (โต๊ะ {current_table_num})")
+                for item_name, data in list(st.session_state.cart.items()):
+                    subtotal = data['price'] * data['qty']
+                    with st.container():
+                        st.markdown(f"**{item_name}** • <span style='color: #ea580c; font-weight: 600;'>฿{int(data['price'])} / จาน</span>", unsafe_allow_html=True)
+                        
+                        # แถวปุ่มปรับจำนวน: ➖ | ตัวเลขจำนวน | ➕ | 🗑️ ลบ
+                        c_minus, c_num, c_plus, c_del = st.columns([1, 1.2, 1, 1.2])
+                        with c_minus:
+                            if st.button("➖", key=f"cart_dec_{item_name}", use_container_width=True):
+                                if data['qty'] > 1:
+                                    st.session_state.cart[item_name]['qty'] -= 1
+                                else:
+                                    del st.session_state.cart[item_name]
+                                st.rerun()
+                        with c_num:
+                            st.markdown(f"<div style='text-align: center; font-size: 1.25rem; font-weight: 700; line-height: 42px; background: #fff7ed; border-radius: 6px; border: 1.5px solid #fdba74; color: #c2410c;'>{data['qty']}</div>", unsafe_allow_html=True)
+                        with c_plus:
+                            if st.button("➕", key=f"cart_inc_{item_name}", use_container_width=True):
+                                st.session_state.cart[item_name]['qty'] += 1
+                                st.rerun()
+                        with c_del:
+                            if st.button("🗑️ ลบ", key=f"cart_rem_{item_name}", use_container_width=True):
                                 del st.session_state.cart[item_name]
                                 st.rerun()
+                                
+                        st.caption(f"รวมย่อย: ฿{int(subtotal):,}")
+                        note = st.text_input("โน้ตพิเศษ (เช่น เผ็ดน้อย/ไม่ใส่ชูรส):", value=data['note'], key=f"cart_note_{item_name}", placeholder="ระบุความต้องการ...")
+                        st.session_state.cart[item_name]['note'] = note
                         st.write("---")
-                    
-                    st.markdown(f"#### ยอดรวมทั้งสิ้น: <span style='color: #ea580c;'>฿{int(total_cart_sum)}</span>", unsafe_allow_html=True)
-                    if st.button("🚀 ยืนยันส่งออเดอร์เข้าครัว", type="primary", use_container_width=True):
-                        c.execute("INSERT INTO orders (table_id, status, total_price, created_at) VALUES (?, 'pending', ?, datetime('now', 'localtime'))", (current_table_num, total_cart_sum))
-                        new_order_id = c.lastrowid
-                        for iname, idata in st.session_state.cart.items():
-                            c.execute("INSERT INTO order_items (order_id, item_name, price, quantity, note) VALUES (?, ?, ?, ?, ?)", (new_order_id, iname, idata['price'], idata['qty'], idata['note']))
-                        conn.commit()
-                        st.session_state.cart = {}
-                        st.success(f"🎉 ส่งออเดอร์ #{new_order_id} เรียบร้อยแล้วค่ะ!")
-                        st.rerun()
+                
+                st.markdown(f"#### ยอดรวมทั้งสิ้น: <span style='color: #ea580c;'>฿{int(total_cart_sum):,}</span>", unsafe_allow_html=True)
+                if st.button("🚀 ยืนยันส่งออเดอร์เข้าครัว", type="primary", use_container_width=True):
+                    c.execute("INSERT INTO orders (table_id, status, total_price, created_at) VALUES (?, 'pending', ?, datetime('now', 'localtime'))", (current_table_num, total_cart_sum))
+                    new_order_id = c.lastrowid
+                    for iname, idata in st.session_state.cart.items():
+                        c.execute("INSERT INTO order_items (order_id, item_name, price, quantity, note) VALUES (?, ?, ?, ?, ?)", (new_order_id, iname, idata['price'], idata['qty'], idata['note']))
+                    conn.commit()
+                    st.session_state.cart = {}
+                    st.success(f"🎉 ส่งออเดอร์ #{new_order_id} เรียบร้อยแล้วค่ะ!")
+                    st.rerun()
 
-    # แสดงเมนูแบบการ์ด 2 คอลัมน์บนจอใหญ่ / 1 คอลัมน์บนมือถือ
+    # แสดงรายการเมนูอาหาร แถวการ์ดแนวนอนมาตรฐานแอปสั่งอาหาร (กดได้ทุกรายการ ไม่ชน ไม่เบียด)
     filtered_menus = all_menus if sel_cat == "ทั้งหมด" else [m for m in all_menus if m[2] == sel_cat]
     
-    # จัดตารางการ์ดอาหารให้อ่านง่าย สบายตา
-    menu_cols = st.columns(2)
     for idx, (m_id, name, cat, price, img, desc) in enumerate(filtered_menus):
-        with menu_cols[idx % 2]:
-            with st.container(border=True):
-                mc_img, mc_info = st.columns([1, 2])
-                with mc_img:
-                    st.image(img, use_container_width=True)
-                with mc_info:
-                    st.markdown(f"**{name}**")
-                    st.caption(desc)
-                    st.markdown(f"<span style='color: #ea580c; font-weight: bold; font-size: 17px;'>฿{int(price)}</span>", unsafe_allow_html=True)
-                    if st.button("➕ เพิ่ม", key=f"m_add_{m_id}", use_container_width=True):
-                        if name in st.session_state.cart:
-                            st.session_state.cart[name]['qty'] += 1
-                        else:
-                            st.session_state.cart[name] = {'price': price, 'qty': 1, 'note': ''}
-                        st.toast(f"เพิ่ม '{name}' แล้ว!", icon="🍲")
-                        st.rerun()
+        with st.container(border=True):
+            mc_img, mc_info, mc_btn = st.columns([1.2, 3.2, 1.4])
+            with mc_img:
+                st.image(img, use_container_width=True)
+            with mc_info:
+                st.markdown(f"**{name}**")
+                st.caption(desc)
+                st.markdown(f"<span style='color: #ea580c; font-weight: bold; font-size: 1.1rem;'>฿{int(price)}</span>", unsafe_allow_html=True)
+            with mc_btn:
+                cur_qty = st.session_state.cart.get(name, {}).get('qty', 0)
+                if cur_qty > 0:
+                    st.markdown(f"<div style='text-align: center; color: #ea580c; font-weight: bold; font-size: 13px; margin-bottom: 2px;'>ในตะกร้า: {cur_qty}</div>", unsafe_allow_html=True)
+                if st.button("➕ เพิ่ม", key=f"btn_add_menu_{m_id}_{idx}", use_container_width=True, type="primary" if cur_qty > 0 else "secondary"):
+                    if name in st.session_state.cart:
+                        st.session_state.cart[name]['qty'] += 1
+                    else:
+                        st.session_state.cart[name] = {'price': price, 'qty': 1, 'note': ''}
+                    st.toast(f"เพิ่ม '{name}' ลงตะกร้าแล้ว!", icon="🍲")
+                    st.rerun()
 
     # ตรวจสอบสถานะอาหารที่สั่งไปแล้วของโต๊ะนี้
     st.write("---")
