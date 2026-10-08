@@ -1,6 +1,7 @@
 import streamlit as st
 import sqlite3
 import os
+import base64
 from datetime import datetime, timedelta
 
 # ตั้งค่าหน้าเว็บรองรับทุกขนาดหน้าจอ
@@ -26,9 +27,9 @@ html, body, [class*="css"], .stMarkdown, p, span, button, input {
     .main .block-container {
         padding: 0.75rem 0.5rem 3rem 0.5rem !important;
     }
-    h1 { font-size: 1.5rem !important; }
-    h2 { font-size: 1.25rem !important; }
-    h3 { font-size: 1.1rem !important; }
+    h1 { font-size: 1.8rem !important; }
+    h2 { font-size: 1.35rem !important; }
+    h3 { font-size: 1.15rem !important; }
 }
 
 @media (min-width: 641px) and (max-width: 1024px) {
@@ -39,7 +40,7 @@ html, body, [class*="css"], .stMarkdown, p, span, button, input {
 
 /* ปุ่มกดขนาดใหญ่ สัมผัสง่ายสำหรับนิ้วมือบนสมาร์ตโฟน (Touch-friendly 44px+) */
 .stButton > button {
-    border-radius: 14px !important;
+    border-radius: 12px !important;
     font-weight: 600 !important;
     min-height: 44px !important;
     font-size: 14px !important;
@@ -60,7 +61,7 @@ button[kind="primary"] {
 
 /* การ์ดรายการอาหารมนโค้ง สวยงาม มีมิติ */
 div[data-testid="stVerticalBlockBorderWrapper"] {
-    border-radius: 18px !important;
+    border-radius: 16px !important;
     border: 1px solid #fed7aa !important;
     box-shadow: 0 2px 10px rgba(0, 0, 0, 0.04) !important;
     background: #ffffff !important;
@@ -71,6 +72,62 @@ div[data-testid="stVerticalBlockBorderWrapper"] {
 img {
     border-radius: 14px !important;
     object-fit: cover !important;
+}
+
+/* 🔶 ปุ่มเลือกหมวดหมู่อาหาร ให้เป็นปุ่มทรงเหลี่ยมชัดเจน (Crisp Rectangular Category Buttons) */
+div[data-testid="stRadio"] {
+    display: flex !important;
+    justify-content: center !important;
+    width: 100% !important;
+    margin: 4px 0 14px 0 !important;
+}
+div[data-testid="stRadio"] > div[role="radiogroup"] {
+    display: flex !important;
+    flex-wrap: wrap !important;
+    gap: 8px !important;
+    justify-content: center !important;
+    width: 100% !important;
+}
+div[data-testid="stRadio"] label[data-baseweb="radio"] {
+    border-radius: 4px !important; /* ปรับเป็นทรงเหลี่ยมชัดเจน ไม่มีมุมโค้งมน */
+    border: 2px solid #ea580c !important; /* ขอบเหลี่ยมสีส้มสด */
+    background-color: #ffffff !important;
+    padding: 8px 18px !important;
+    cursor: pointer !important;
+    margin: 0 !important;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05) !important;
+    transition: all 0.15s ease-in-out !important;
+}
+div[data-testid="stRadio"] label[data-baseweb="radio"]:hover {
+    background-color: #ffedd5 !important;
+    border-color: #c2410c !important;
+}
+/* ซ่อนวงกลม radio เดิมออก ให้เป็นปุ่มเหลี่ยมเต็มตัว */
+div[data-testid="stRadio"] label[data-baseweb="radio"] > div:first-child {
+    display: none !important;
+}
+/* ฟอนต์ตัวหนังสือในปุ่มหมวดหมู่ */
+div[data-testid="stRadio"] label[data-baseweb="radio"] p,
+div[data-testid="stRadio"] label[data-baseweb="radio"] span,
+div[data-testid="stRadio"] label[data-baseweb="radio"] div {
+    font-size: 15px !important;
+    font-weight: 600 !important;
+    color: #431407 !important;
+}
+/* เมื่อปุ่มหมวดหมู่ถูกกดเลือก (Active / Selected) ทรงเหลี่ยมสีส้มชัดเจน */
+div[data-testid="stRadio"] label[data-baseweb="radio"]:has(input:checked),
+div[data-testid="stRadio"] label[data-baseweb="radio"][aria-checked="true"] {
+    background-color: #ea580c !important;
+    border: 2px solid #9a3412 !important;
+    box-shadow: 0 4px 10px rgba(234, 88, 12, 0.35) !important;
+}
+div[data-testid="stRadio"] label[data-baseweb="radio"]:has(input:checked) p,
+div[data-testid="stRadio"] label[data-baseweb="radio"]:has(input:checked) span,
+div[data-testid="stRadio"] label[data-baseweb="radio"]:has(input:checked) div,
+div[data-testid="stRadio"] label[data-baseweb="radio"][aria-checked="true"] p,
+div[data-testid="stRadio"] label[data-baseweb="radio"][aria-checked="true"] span {
+    color: #ffffff !important;
+    font-weight: 700 !important;
 }
 
 /* ซ่อนแถบเมนูที่ไม่จำเป็นของ Streamlit เพื่อประสบการณ์แบบ App แท้ */
@@ -178,6 +235,12 @@ is_admin_mode = (params.get("mode", "") == "admin")
 logo_path = "static/img/logo.png"
 if not os.path.exists(logo_path):
     logo_path = "templates/img/logo.png"
+
+def get_base64_image(image_path):
+    if image_path and os.path.exists(image_path):
+        with open(image_path, "rb") as img_file:
+            return base64.b64encode(img_file.read()).decode()
+    return ""
 
 # ==============================================================================
 # 🔴 ฝั่งร้านค้า (เคาน์เตอร์ & ครัว & รายงาน) -> https://.../?mode=admin
@@ -350,17 +413,32 @@ else:
     except:
         current_table_num = 1
 
-    # Header ลูกค้า: แสดงเฉพาะชื่อร้าน โต๊ะ และสโลแกน (ไม่มีปุ่มไปหลังร้านเด็ดขาด)
-    col_l, col_t = st.columns([1, 5])
-    with col_l:
-        if os.path.exists(logo_path):
-            st.image(logo_path, width=70)
-        else:
-            st.title("🌶️")
-    with col_t:
-        st.markdown(f"<h3 style='color: #c2410c; margin: 0;'>ร้านฟ้าใสตำนัว • โต๊ะที่ {current_table_num}</h3>", unsafe_allow_html=True)
-        st.caption("ส้มตำ ยำ ลาบ ย่าง แซ่บนัว สดใหม่ทุกครก")
+    # Header ลูกค้า: จัดกลางเสมอ สวยงาม ชัดเจน รองรับทุกขนาดหน้าจอ
+    logo_b64 = get_base64_image(logo_path)
+    if logo_b64:
+        logo_html = f'''<div style="text-align: center; margin-bottom: 6px;">
+            <img src="data:image/png;base64,{logo_b64}" 
+                 style="width: 105px; height: 105px; object-fit: cover; border-radius: 50%; box-shadow: 0 4px 16px rgba(234, 88, 12, 0.28); display: inline-block; border: 3px solid #ffedd5;" 
+                 alt="โลโก้ร้านฟ้าใสตำนัว" />
+        </div>'''
+    else:
+        logo_html = '<div style="text-align: center; font-size: 55px; margin-bottom: 4px;">🌶️</div>'
 
+    header_html = f'''
+    {logo_html}
+    <h1 style="text-align: center; color: #c2410c; font-weight: 800; font-size: 2.25rem; margin: 2px 0 0 0; letter-spacing: -0.5px; line-height: 1.2;">
+        ร้านฟ้าใสตำนัว
+    </h1>
+    <p style="text-align: center; color: #78716c; font-size: 0.95rem; margin: 0 0 10px 0;">
+        ส้มตำ ยำ ลาบ ย่าง แซ่บนัว สดใหม่ทุกครก 🌶️
+    </p>
+    <div style="text-align: center; margin: 6px 0 16px 0;">
+        <div style="display: inline-block; background: linear-gradient(135deg, #ea580c, #c2410c); color: white; padding: 7px 30px; border-radius: 6px; font-size: 1.3rem; font-weight: 700; box-shadow: 0 4px 12px rgba(234, 88, 12, 0.35); letter-spacing: 0.5px;">
+            🪑 โต๊ะที่ {current_table_num}
+        </div>
+    </div>
+    '''
+    st.markdown(header_html, unsafe_allow_html=True)
     st.write("---")
 
     if 'cart' not in st.session_state:
@@ -372,7 +450,8 @@ else:
     all_menus = c.fetchall()
     categories = sorted(list(set(m[2] for m in all_menus)))
     
-    sel_cat = st.radio("เลือกหมวดหมู่อาหาร:", ["ทั้งหมด"] + categories, horizontal=True)
+    st.markdown("<p style='text-align: center; font-weight: 600; color: #44403c; margin-bottom: 4px; font-size: 1.05rem;'>🍽️ เลือกหมวดหมู่อาหาร</p>", unsafe_allow_html=True)
+    sel_cat = st.radio("เลือกหมวดหมู่อาหาร:", ["ทั้งหมด"] + categories, horizontal=True, label_visibility="collapsed")
     
     # คำนวณยอดตะกร้า
     total_cart_qty = sum(item['qty'] for item in st.session_state.cart.values())
