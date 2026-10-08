@@ -677,25 +677,59 @@ else:
                     with c_p:
                         st.button("➕", key=f"btn_inc_card_{m_id}", on_click=add_to_cart_item, args=(name, price), use_container_width=True, type="primary")
 
-    # ตรวจสอบสถานะอาหารที่สั่งไปแล้วของโต๊ะนี้
+    # ตรวจสอบสถานะอาหารที่สั่งไปแล้วของโต๊ะนี้ (ระบบเรียลไทม์ Auto-Refresh ทุก 3 วินาที)
     st.write("---")
-    st.markdown(f"#### 📋 ติดตามสถานะอาหารของ โต๊ะที่ {current_table_num}")
-    c.execute("SELECT id, status, total_price, created_at FROM orders WHERE table_id = ? AND status != 'paid' ORDER BY id DESC", (current_table_num,))
-    cur_orders = c.fetchall()
-    if not cur_orders:
-        st.caption("ยังไม่มีรายการอาหารที่สั่งในขณะนี้ค่ะ")
-    else:
-        st_map = {
-            'pending': ('⏳ รอร้านรับออเดอร์', 'orange'),
-            'accepted': ('🍳 ครัวกำลังปรุง', 'blue'),
-            'cooked': ('🍲 ปรุงเสร็จ รอเสิร์ฟ', 'purple'),
-            'served': ('🍽️ เสิร์ฟแล้ว ทานให้อร่อยนะคะ', 'green')
-        }
-        for oid, status, total, otime in cur_orders:
-            label, color = st_map.get(status, (status, 'gray'))
-            with st.expander(f"ออเดอร์ #{oid} — สถานะ: :{color}[{label}] (฿{int(total)})", expanded=True):
-                c.execute("SELECT item_name, quantity, note FROM order_items WHERE order_id = ?", (oid,))
-                for iname, iqty, inote in c.fetchall():
-                    st.write(f"- **{iname}** x{iqty} {' *(โน้ต: ' + inote + ')*' if inote else ''}")
+    
+    @st.fragment(run_every=3)
+    def render_table_order_tracking(table_num):
+        conn_trk = sqlite3.connect(DB_NAME)
+        c_trk = conn_trk.cursor()
+        
+        # ดึงออเดอร์ล่าสุดของโต๊ะนี้
+        c_trk.execute("""
+            SELECT id, status, total_price, created_at 
+            FROM orders 
+            WHERE table_id = ? 
+            ORDER BY id DESC LIMIT 5
+        """, (table_num,))
+        cur_orders = c_trk.fetchall()
+        
+        col_t_title, col_t_btn = st.columns([3, 1])
+        with col_t_title:
+            st.markdown(f"#### 📋 ติดตามสถานะอาหาร โต๊ะที่ {table_num} (เรียลไทม์ ⚡)")
+            st.caption("ระบบจะอัปเดตสถานะอัตโนมัติทุก 3 วินาทีเมื่อครัวเปลี่ยนขั้นตอน")
+        with col_t_btn:
+            if st.button("🔄 รีเฟรช", key=f"btn_ref_table_{table_num}", use_container_width=True):
+                st.rerun()
 
+        if not cur_orders:
+            st.info("ยังไม่มีรายการอาหารที่สั่งในขณะนี้ค่ะ สามารถเลือกเมนูแซ่บๆ ด้านบนแล้วส่งเข้าครัวได้เลยนะคะ 🌶️")
+        else:
+            st_map = {
+                'pending': ('⏳ รอร้านรับออเดอร์', 'orange', 0.25, 'กำลังส่งออเดอร์เข้าจอครัว...'),
+                'accepted': ('🍳 ครัวกำลังปรุงอาหาร', 'blue', 0.55, 'แม่ครัวกำลังตั้งกระทะ ปรุงสดใหม่ค่ะ'),
+                'cooked': ('🍲 ปรุงเสร็จแล้ว รอเสิร์ฟ', 'purple', 0.85, 'อาหารปรุงเสร็จแล้ว พนักงานกำลังยกไปเสิร์ฟค่ะ'),
+                'served': ('🍽️ เสิร์ฟถึงโต๊ะแล้ว', 'green', 1.0, 'เสิร์ฟครบแล้ว ทานให้อร่อยแซ่บนัวนะคะ!'),
+                'paid': ('✅ เช็คบิลเรียบร้อยแล้ว', 'gray', 1.0, 'ขอบคุณที่มาอุดหนุนร้านฟ้าใสตำนัวนะคะ 🙏')
+            }
+            for oid, status, total, otime in cur_orders:
+                label, color, prog_val, desc_status = st_map.get(status, (status, 'gray', 0.1, ''))
+                with st.container(border=True):
+                    c_oh1, c_oh2 = st.columns([3, 1])
+                    with c_oh1:
+                        st.markdown(f"**ออเดอร์ #{oid}** — <span style='font-size: 1.05rem; font-weight: bold;'>:{color}[{label}]</span>", unsafe_allow_html=True)
+                        st.caption(f"⚡ {desc_status} • สั่งเมื่อ {otime}")
+                    with c_oh2:
+                        st.markdown(f"<div style='text-align: right; font-weight: bold; font-size: 1.1rem; color: #ea580c;'>฿{int(total):,}</div>", unsafe_allow_html=True)
+                    
+                    st.progress(prog_val)
+                    
+                    with st.expander("🔍 ดูรายการอาหารในบิลนี้", expanded=(status != 'paid')):
+                        c_trk.execute("SELECT item_name, quantity, note FROM order_items WHERE order_id = ?", (oid,))
+                        for iname, iqty, inote in c_trk.fetchall():
+                            note_text = f" *(โน้ต: {inote})*" if inote else ""
+                            st.write(f"- **{iname}** x{iqty}{note_text}")
+        conn_trk.close()
+
+    render_table_order_tracking(current_table_num)
     conn.close()
