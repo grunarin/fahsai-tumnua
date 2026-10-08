@@ -7,8 +7,14 @@ import wave
 import struct
 import math
 import io
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
+
+# กำหนดเขตเวลาประเทศไทย (UTC+7) ให้ตรงกันทั้งบนเครื่อง Local และบน Streamlit Cloud
+TH_TZ = timezone(timedelta(hours=7))
+
+def get_thai_now():
+    return datetime.now(TH_TZ)
 
 # ตั้งค่าหน้าเว็บรองรับทุกขนาดหน้าจอ
 st.set_page_config(
@@ -590,7 +596,7 @@ def render_pos_dashboard():
     # แถบแสดงสถานะอัปเดตสดแบบเรียลไทม์
     top_c1, top_c2 = st.columns([3, 1])
     with top_c1:
-        st.markdown(f"**⚡ สถานะระบบ:** :green[**● เชื่อมต่อสด • อัปเดตออเดอร์อัตโนมัติทุก 3 วินาที**] <span style='color: #64748b; font-size: 0.85rem;'>(เวลาปัจจุบัน: {datetime.now().strftime('%H:%M:%S')})</span>", unsafe_allow_html=True)
+        st.markdown(f"**⚡ สถานะระบบ:** :green[**● เชื่อมต่อสด • อัปเดตออเดอร์อัตโนมัติทุก 3 วินาที**] <span style='color: #64748b; font-size: 0.85rem;'>(เวลาปัจจุบัน: {get_thai_now().strftime('%H:%M:%S')})</span>", unsafe_allow_html=True)
     with top_c2:
         if st.button("🔔 ทดสอบเสียงกระดิ่ง", key="btn_test_sound", use_container_width=True):
             play_order_sound()
@@ -972,7 +978,8 @@ if is_admin_mode:
         with c_f2:
             sort_by = st.pills("📊 จัดอันดับตาม:", ["จำนวนจานที่ขายได้ (จาน)", "ยอดขายรวม (บาท)"], default="จำนวนจานที่ขายได้ (จาน)", key="pills_sort_filter")
 
-        date_sql = "AND DATE(o.created_at) = DATE('now', 'localtime')" if filter_period == "วันนี้" else ""
+        thai_today_str = get_thai_now().strftime('%Y-%m-%d')
+        date_sql = f"AND DATE(o.created_at) = '{thai_today_str}'" if filter_period == "วันนี้" else ""
         order_sql = "total_qty DESC, total_sales DESC" if "จำนวนจาน" in sort_by else "total_sales DESC, total_qty DESC"
         
         c_bs.execute(f'''
@@ -1245,7 +1252,8 @@ else:
                 
                 st.markdown(f"#### ยอดรวมทั้งสิ้น: <span style='color: #ea580c;'>฿{int(total_cart_sum):,}</span>", unsafe_allow_html=True)
                 if st.button("🚀 ยืนยันส่งออเดอร์เข้าครัว", type="primary", use_container_width=True):
-                    c.execute("INSERT INTO orders (table_id, status, total_price, created_at) VALUES (?, 'pending', ?, datetime('now', 'localtime'))", (current_table_num, total_cart_sum))
+                    order_time_th = get_thai_now().strftime('%Y-%m-%d %H:%M:%S')
+                    c.execute("INSERT INTO orders (table_id, status, total_price, created_at) VALUES (?, 'pending', ?, ?)", (current_table_num, total_cart_sum, order_time_th))
                     new_order_id = c.lastrowid
                     for iname, idata in st.session_state.cart.items():
                         c.execute("INSERT INTO order_items (order_id, item_name, price, quantity, note, status) VALUES (?, ?, ?, ?, ?, 'pending')", (new_order_id, iname, idata['price'], idata['qty'], idata['note']))
