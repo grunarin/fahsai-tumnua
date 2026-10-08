@@ -805,7 +805,7 @@ if is_admin_mode:
 
     tab_pos, tab_rep, tab_tbl = st.tabs([
         "🍳 จอครัว & เคาน์เตอร์คิดเงิน", 
-        "📊 รายงาน & วางแผนเตรียมของ", 
+        "🏆 เมนูขายดี", 
         "🪑 จัดการโต๊ะอาหาร & เคลียร์โต๊ะ"
     ])
 
@@ -813,39 +813,130 @@ if is_admin_mode:
         render_pos_dashboard()
 
     with tab_rep:
-        st.subheader("📊 ตารางวางแผนเตรียมวัตถุดิบอาหารล่วงหน้า (+15% Buffer)")
-        conn = sqlite3.connect(DB_NAME)
-        c = conn.cursor()
-        c.execute('''
-            SELECT r.ingredient_name, r.unit, SUM(r.quantity_per_portion * oi.quantity) as total_used
-            FROM orders o
-            JOIN order_items oi ON o.id = oi.order_id
-            JOIN recipe_ingredients r ON oi.item_name = r.menu_name
-            GROUP BY r.ingredient_name, r.unit
-            ORDER BY total_used DESC
-        ''')
-        prep_data = c.fetchall()
+        st.subheader("🏆 อันดับเมนูขายดี (Best Selling Menus)")
+        st.caption("จัดอันดับเมนูยอดนิยมของฟ้าใสตำนัว ตามจำนวนจานและยอดขายรวม")
         
-        if prep_data:
-            table_rows = []
-            for ing, unit, used in prep_data:
-                rec = round(used * 1.15, 1)
-                step = "ชั่งแบ่ง Portion แช่เย็น"
-                if "มะละกอ" in ing: step = "ขูดเส้น แช่น้ำเย็นให้กรอบ"
-                elif "ไก่" in ing or "หมู" in ing: step = "หั่นและหมักเครื่องเทศข้ามคืน"
-                elif "ข้าวเหนียว" in ing: step = "แช่น้ำเตรียมหุงร้อน"
-                elif "ปลาร้า" in ing: step = "ต้มปรุงรส พักให้เย็น"
-                table_rows.append({
-                    "รายการวัตถุดิบ": ing,
-                    "หน่วย": unit,
-                    "ใช้ไปแล้ว (วันนี้)": f"{used:,}",
-                    "แนะนำเตรียมพรุ่งนี้ (+15%)": f"{rec:,} {unit}",
-                    "คำแนะนำ": step
-                })
-            st.dataframe(table_rows, use_container_width=True)
+        conn_bs = sqlite3.connect(DB_NAME)
+        c_bs = conn_bs.cursor()
+        
+        # ตัวกรองช่วงเวลาและการเรียงลำดับ
+        c_f1, c_f2 = st.columns([1.5, 2])
+        with c_f1:
+            filter_period = st.pills("📅 ช่วงเวลา:", ["ทั้งหมด", "วันนี้"], default="ทั้งหมด", key="pills_period_filter")
+        with c_f2:
+            sort_by = st.pills("📊 จัดอันดับตาม:", ["จำนวนจานที่ขายได้ (จาน)", "ยอดขายรวม (บาท)"], default="จำนวนจานที่ขายได้ (จาน)", key="pills_sort_filter")
+
+        date_sql = "AND DATE(o.created_at) = DATE('now', 'localtime')" if filter_period == "วันนี้" else ""
+        order_sql = "total_qty DESC, total_sales DESC" if "จำนวนจาน" in sort_by else "total_sales DESC, total_qty DESC"
+        
+        c_bs.execute(f'''
+            SELECT 
+                oi.item_name,
+                COALESCE(mi.category, 'ทั่วไป') as category,
+                COALESCE(mi.image, '') as image,
+                COALESCE(mi.price, oi.price) as unit_price,
+                SUM(oi.quantity) as total_qty,
+                SUM(oi.quantity * oi.price) as total_sales
+            FROM order_items oi
+            JOIN orders o ON oi.order_id = o.id
+            LEFT JOIN menu_items mi ON oi.item_name = mi.name
+            WHERE o.status != 'cancelled' {date_sql}
+            GROUP BY oi.item_name
+            ORDER BY {order_sql}
+        ''')
+        best_sellers = c_bs.fetchall()
+        
+        if not best_sellers:
+            st.info("ยังไม่มีข้อมูลการขายในช่วงเวลานี้ค่ะ")
         else:
-            st.info("ยังไม่มีข้อมูลการใช้วัตถุดิบในระบบ")
-        conn.close()
+            total_sold_all = sum(r[4] for r in best_sellers)
+            total_revenue_all = sum(r[5] for r in best_sellers)
+            top_seller = best_sellers[0]
+            
+            # สถิติภาพรวมด้านบน
+            m1, m2, m3 = st.columns(3)
+            m1.metric("🍲 จำนวนอาหารที่ขายได้รวม", f"{total_sold_all:,} จาน")
+            m2.metric("💰 ยอดขายรวม", f"฿{int(total_revenue_all):,}")
+            m3.metric("👑 เมนูขายดีอันดับ 1", f"{top_seller[0]}", f"{top_seller[4]} จาน (฿{int(top_seller[5]):,})")
+            
+            st.write("---")
+            
+            # 3 อันดับแรก (Podium Top 3)
+            st.markdown("### 🥇🥈🥉 3 อันดับเมนูยอดนิยมสูงสุด")
+            podium_cols = st.columns(min(3, len(best_sellers)))
+            medals = ["🥇 อันดับ 1 (แชมป์)", "🥈 อันดับ 2", "🥉 อันดับ 3"]
+            badge_bg = ["#fef3c7", "#f1f5f9", "#ffedd5"]
+            badge_border = ["#f59e0b", "#94a3b8", "#f97316"]
+            
+            for p_idx in range(min(3, len(best_sellers))):
+                p_name, p_cat, p_img, p_price, p_qty, p_sales = best_sellers[p_idx]
+                with podium_cols[p_idx]:
+                    with st.container(border=True):
+                        st.markdown(f"<div style='background: {badge_bg[p_idx]}; border: 1.5px solid {badge_border[p_idx]}; border-radius: 6px; padding: 4px 8px; text-align: center; font-weight: bold; font-size: 1rem; margin-bottom: 8px;'>{medals[p_idx]}</div>", unsafe_allow_html=True)
+                        if p_img:
+                            st.image(p_img, use_container_width=True)
+                        st.markdown(f"**{p_name}**")
+                        st.caption(f"หมวดหมู่: {p_cat}")
+                        st.markdown(f"🔥 ขายได้: <span style='color: #ea580c; font-size: 1.25rem; font-weight: bold;'>{p_qty} จาน</span>", unsafe_allow_html=True)
+                        st.markdown(f"💵 รวมเงิน: **฿{int(p_sales):,}**")
+
+            st.write("---")
+            
+            # ตารางจัดอันดับทั้งหมด
+            st.markdown("### 📋 ตารางจัดอันดับเมนูขายดีทั้งหมด")
+            max_qty = best_sellers[0][4] if best_sellers and best_sellers[0][4] > 0 else 1
+            
+            for rank, (iname, icat, iimg, iprice, iqty, isales) in enumerate(best_sellers, 1):
+                with st.container(border=True):
+                    rc1, rc2, rc3, rc4 = st.columns([0.8, 1.2, 3, 2])
+                    with rc1:
+                        if rank == 1:
+                            r_badge = "🥇 #1"
+                        elif rank == 2:
+                            r_badge = "🥈 #2"
+                        elif rank == 3:
+                            r_badge = "🥉 #3"
+                        else:
+                            r_badge = f"#{rank}"
+                        st.markdown(f"<div style='font-size: 1.3rem; font-weight: 800; line-height: 60px; text-align: center; color: #ea580c;'>{r_badge}</div>", unsafe_allow_html=True)
+                    with rc2:
+                        if iimg:
+                            st.image(iimg, use_container_width=True)
+                        else:
+                            st.markdown("<div style='font-size: 2.2rem; text-align: center; line-height: 60px;'>🍲</div>", unsafe_allow_html=True)
+                    with rc3:
+                        st.markdown(f"**{iname}**")
+                        st.caption(f"หมวด: {icat} • ราคา ฿{int(iprice)}/จาน")
+                        pct_of_top = min(1.0, float(iqty) / float(max_qty))
+                        st.progress(pct_of_top)
+                    with rc4:
+                        st.markdown(f"<div style='text-align: right;'><span style='font-size: 1.25rem; font-weight: bold; color: #ea580c;'>{iqty} จาน</span><br><span style='font-size: 0.95rem; color: #555;'>฿{int(isales):,}</span></div>", unsafe_allow_html=True)
+
+            # สรุปยอดขายแยกตามหมวดหมู่อาหาร
+            st.write("---")
+            st.markdown("### 📊 สรุปยอดขายแยกตามหมวดหมู่อาหาร")
+            c_bs.execute(f'''
+                SELECT 
+                    COALESCE(mi.category, 'ทั่วไป') as category,
+                    SUM(oi.quantity) as cat_qty,
+                    SUM(oi.quantity * oi.price) as cat_sales
+                FROM order_items oi
+                JOIN orders o ON oi.order_id = o.id
+                LEFT JOIN menu_items mi ON oi.item_name = mi.name
+                WHERE o.status != 'cancelled' {date_sql}
+                GROUP BY mi.category
+                ORDER BY cat_qty DESC
+            ''')
+            cat_summary = c_bs.fetchall()
+            if cat_summary:
+                cat_cols = st.columns(min(len(cat_summary), 4))
+                for c_idx, (cname, cqty, csales) in enumerate(cat_summary):
+                    with cat_cols[c_idx % len(cat_cols)]:
+                        with st.container(border=True):
+                            st.markdown(f"**{cname}**")
+                            st.markdown(f"🔥 ขายได้: **{cqty} จาน**")
+                            st.caption(f"ยอดรวม: ฿{int(csales):,}")
+        conn_bs.close()
 
     with tab_tbl:
         st.subheader("🪑 จัดการโต๊ะอาหาร & ล้างสถานะเพื่อรับลูกค้ารายใหม่")
