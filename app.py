@@ -1,27 +1,42 @@
-import streamlit as st
-import streamlit.components.v1 as components
-import sqlite3
-import os
-import base64
-import wave
-import struct
-import math
-import io
-from datetime import datetime, timedelta, timezone
-from urllib.parse import quote
+# ==============================================================================
+# 🌶️ ฟ้าใสตำนัว (Fahsai Tum Nua) - ระบบสั่งอาหารโต๊ะ & จอครัวอัจฉริยะ (Smart POS)
+# ==============================================================================
+# โครงสร้างการทำงานของโปรแกรม:
+# 1. 🗄️ ฐานข้อมูล SQLite (restaurant.db): บันทึกเมนูอาหาร, โต๊ะ, ออเดอร์ และใบเสร็จ
+# 2. 🪑 จัดการโต๊ะอาหาร & QR-Code: เพิ่ม/ลบโต๊ะ สร้าง QR-Code อัตโนมัติ และเคลียร์โต๊ะ
+# 3. 🍳 จอครัว & เคาน์เตอร์คิดเงิน (KDS): แสดงออเดอร์สด อัปเดตทุก 3 วินาที พร้อมเสียงเตือน
+# 4. 🏆 เมนูขายดี: จัดอันดับเมนูยอดนิยม ยอดขายรวม และสรุปตามหมวดหมู่อาหาร
+# 5. 📱 ฝั่งลูกค้า: สแกน QR Code เข้ามาสั่งอาหาร จัดการตะกร้า และติดตามสถานะแบบเรียลไทม์
+# ==============================================================================
 
-# กำหนดเขตเวลาประเทศไทย (UTC+7) ให้ตรงกันทั้งบนเครื่อง Local และบน Streamlit Cloud
+# --- ไลบรารีที่จำเป็นสำหรับระบบ ---
+import streamlit as st                      # เฟรมเวิร์กหลักสำหรับสร้างเว็บแอปพลิเคชัน
+import streamlit.components.v1 as components # ใช้สำหรับแทรก HTML/JS เช่น หน้าต่างพิมพ์ใบเสร็จ
+import sqlite3                             # ระบบจัดการฐานข้อมูลในตัวเครื่อง (ไม่ต้องลงเซิร์ฟเวอร์แยก)
+import os                                  # จัดการไฟล์และพาธของระบบปฏิบัติการ
+import base64                              # เข้ารหัสไฟล์รูปภาพและเสียงเป็นข้อความ Base64
+import wave                                # สร้างและจัดการไฟล์เสียงแบบคลื่นเสียง WAV
+import struct                              # แปลงข้อมูลตัวเลขเป็นไบนารีสำหรับไฟล์เสียง
+import math                                # ฟังก์ชันคณิตศาสตร์ (ใช้คำนวณคลื่นเสียงกระดิ่ง)
+import io                                  # จัดการข้อมูลในหน่วยความจำ RAM (In-Memory Buffer)
+from datetime import datetime, timedelta, timezone # จัดการวันและเวลา
+from urllib.parse import quote             # เข้ารหัส URL สำหรับสร้างภาพ QR Code
+
+# --- ตั้งค่าเวลาประเทศไทย (UTC+7 / Asia/Bangkok) ---
+# เนื่องจากเซิร์ฟเวอร์ Cloud (เช่น Streamlit Cloud) มักตั้งเวลาเป็น UTC (ช้ากว่าไทย 7 ชม.)
+# เราจึงล็อกเขตเวลาให้เป็น UTC+7 โดยตรง เพื่อให้เวลาในระบบตรงกับเวลาจริงในประเทศไทยเสมอ
 TH_TZ = timezone(timedelta(hours=7))
 
 def get_thai_now():
+    """ฟังก์ชันคืนค่าวันและเวลาปัจจุบันของประเทศไทย (UTC+7)"""
     return datetime.now(TH_TZ)
 
-# ตั้งค่าหน้าเว็บรองรับทุกขนาดหน้าจอ
+# --- ตั้งค่าหน้าเว็บ Streamlit เบื้องต้น ---
 st.set_page_config(
-    page_title="ฟ้าใสตำนัว",
-    page_icon="🌶️",
-    layout="wide",
-    initial_sidebar_state="collapsed"
+    page_title="ฟ้าใสตำนัว",               # ชื่อที่จะแสดงบนแท็บของเบราว์เซอร์
+    page_icon="🌶️",                         # ไอคอน Favicon ของแท็บเว็บ
+    layout="wide",                          # ใช้พื้นที่หน้าจอแบบเต็มความกว้าง (Wide mode)
+    initial_sidebar_state="collapsed"       # ซ่อนแถบเมนูด้านข้างเริ่มต้น เพื่อให้ดูเหมือน App มือถือ
 )
 
 # --- CSS อัจฉริยะ ปรับหน้าตาให้สวยงาม รองรับทั้ง มือถือ (iOS/Android), แท็บเล็ต, iPad และ คอมพิวเตอร์ ---
@@ -205,122 +220,270 @@ header {visibility: hidden;}
 </style>
 """, unsafe_allow_html=True)
 
+# ==============================================================================
+# 🗄️ การจัดการฐานข้อมูล SQLite (Database Setup)
+# ==============================================================================
+# ระบบใช้ SQLite ซึ่งเก็บข้อมูลทั้งหมดไว้ในไฟล์เดียวชื่อ "restaurant.db"
+# ข้อดี: เบา รวดเร็ว พกพาง่าย ไม่ต้องติดตั้ง Database Server เพิ่มเติม
+
 DB_NAME = "restaurant.db"
 
 def init_db():
+    """
+    ฟังก์ชันสร้างตารางฐานข้อมูลที่จำเป็น (ถ้ายังไม่มี) 
+    และบันทึกข้อมูลเมนูอาหารเริ่มต้นของร้านฟ้าใสตำนัว
+    """
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
+
+    # 1. ตารางเมนูอาหาร (menu_items)
+    # เก็บชื่ออาหาร หมวดหมู่ ราคา ต้นทุน รูปภาพ และคำอธิบาย
     c.execute('''
         CREATE TABLE IF NOT EXISTS menu_items (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL UNIQUE,
-            category TEXT NOT NULL,
-            price REAL NOT NULL,
-            cost REAL DEFAULT 0,
-            image TEXT,
-            description TEXT
+            name TEXT NOT NULL UNIQUE,          -- ชื่อเมนูอาหาร (ห้ามซ้ำ)
+            category TEXT NOT NULL,             -- หมวดหมู่อาหาร (เช่น ส้มตำ, ย่าง, ต้ม)
+            price REAL NOT NULL,                -- ราคาขาย (บาท)
+            cost REAL DEFAULT 0,                -- ต้นทุนวัตถุดิบ (บาท)
+            image TEXT,                         -- URL รูปภาพอาหาร
+            description TEXT                    -- คำอธิบายความอร่อย/จุดเด่น
         )
     ''')
+
+    # 2. ตารางโต๊ะอาหารในร้าน (tables)
+    # เก็บหมายเลขโต๊ะ ชื่อโต๊ะ และสถานะ (ว่าง/มีลูกค้า)
+    # *หมายเหตุ: ค่าเริ่มต้นไม่มีโต๊ะ โดยเจ้าของร้านสามารถกดเพิ่ม/ลบโต๊ะได้เองตามต้องการ
     c.execute('''
-        CREATE TABLE IF NOT EXISTS recipe_ingredients (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            menu_name TEXT NOT NULL,
-            ingredient_name TEXT NOT NULL,
-            quantity_per_portion REAL NOT NULL,
-            unit TEXT NOT NULL
+        CREATE TABLE IF NOT EXISTS tables (
+            id INTEGER PRIMARY KEY,
+            table_number INTEGER NOT NULL UNIQUE, -- หมายเลขโต๊ะ เช่น 1, 2, 3
+            name TEXT,                            -- ชื่อเรียกโต๊ะ เช่น "โต๊ะที่ 1", "ซุ้มริมน้ำ 2"
+            status TEXT DEFAULT 'available'       -- สถานะโต๊ะ
         )
     ''')
+
+    # 3. ตารางออเดอร์/บิลหลัก (orders)
+    # เก็บรหัสบิล โต๊ะที่สั่ง สถานะบิล ยอดเงินรวม และวันเวลาที่สั่ง
     c.execute('''
         CREATE TABLE IF NOT EXISTS orders (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            table_id INTEGER NOT NULL,
-            status TEXT NOT NULL DEFAULT 'pending',
-            total_price REAL NOT NULL,
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            table_id INTEGER NOT NULL,          -- หมายเลขโต๊ะที่สั่ง
+            status TEXT NOT NULL DEFAULT 'pending', -- สถานะบิล: pending -> accepted -> cooked -> served -> paid -> archived
+            total_price REAL NOT NULL,          -- ยอดเงินรวมทั้งสิ้นของบิล (บาท)
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP -- วันและเวลาที่สั่งอาหาร
         )
     ''')
+
+    # 4. ตารางรายการอาหารย่อยในแต่ละบิล (order_items)
+    # เก็บว่าในบิลนั้นๆ สั่งอาหารจานใดบ้าง จำนวนกี่จาน ราคา และสถานะการปรุงแต่ละจาน
     c.execute('''
         CREATE TABLE IF NOT EXISTS order_items (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            order_id INTEGER NOT NULL,
-            item_name TEXT NOT NULL,
-            price REAL NOT NULL,
-            cost REAL DEFAULT 0,
-            quantity INTEGER NOT NULL,
-            note TEXT,
-            status TEXT DEFAULT 'pending'
+            order_id INTEGER NOT NULL,          -- เชื่อมกับ orders.id
+            item_name TEXT NOT NULL,            -- ชื่อเมนูอาหารที่สั่ง
+            price REAL NOT NULL,                -- ราคาต่อหน่วย ณ ตอนที่สั่ง
+            cost REAL DEFAULT 0,                -- ต้นทุนต่อหน่วย
+            quantity INTEGER NOT NULL,          -- จำนวนจานที่สั่ง
+            note TEXT,                          -- โน้ตเพิ่มเติม เช่น เผ็ดน้อย, ไม่ใส่ชูรส
+            status TEXT DEFAULT 'pending'       -- สถานะแต่ละจาน: pending(กำลังปรุง) -> cooked(ปรุงเสร็จ) -> served(เสิร์ฟแล้ว)
         )
     ''')
-    # ตรวจสอบและอัปเกรดคอลัมน์ status ในตาราง order_items แบบอัตโนมัติ
+
+    # ตรวจสอบและอัปเกรดคอลัมน์ status ในตาราง order_items แบบอัตโนมัติ (Backward Compatibility)
     c.execute("PRAGMA table_info(order_items)")
     existing_cols = [col[1] for col in c.fetchall()]
     if 'status' not in existing_cols:
         c.execute("ALTER TABLE order_items ADD COLUMN status TEXT DEFAULT 'pending'")
     c.execute("UPDATE order_items SET status = 'pending' WHERE status IS NULL")
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS tables (
-            id INTEGER PRIMARY KEY,
-            table_number INTEGER NOT NULL UNIQUE,
-            name TEXT,
-            status TEXT DEFAULT 'available'
-        )
-    ''')
-    # ค่าเริ่มต้นไม่มีโต๊ะ (ร้านค้าสามารถเพิ่ม/ลบโต๊ะได้เองตามต้องการ)
 
+    # บันทึกชุดเมนูอาหารทั้งหมดของร้าน "ฟ้าใสตำนัว" (10 หมวดหมู่ 131 เมนูแซ่บ)
     fahsai_menu = [
-        ("ตำปูปลาร้านัวแซ่บ", "ส้มตำ & ตำนัว", 70, 25, "https://images.unsplash.com/photo-1569058242253-92a9c755a0ec?auto=format&fit=crop&w=600&q=80", "เส้นมะละกอกรอบ พริกแห้ง น้ำปลาร้าต้มสุกสูตรฟ้าใส นัวเข้มข้นถึงใจ"),
-        ("ตำไทยไข่เค็ม", "ส้มตำ & ตำนัว", 80, 28, "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=600&q=80", "รสเปรี้ยวหวานกลมกล่อม กุ้งแห้งคัดพิเศษ ถั่วลิสงคั่วใหม่ ไข่เค็มเต็มใบ"),
-        ("ตำข้าวโพดกุ้งสด", "ส้มตำ & ตำนัว", 130, 50, "https://images.unsplash.com/photo-1559847844-5315695dadae?auto=format&fit=crop&w=600&q=80", "ข้าวโพดหวานคลุกน้ำยำรสแซ่บ กุ้งสดตัวโตเนื้อเด้งหวานฉ่ำ"),
-        ("ตำถาดฟ้าใสรวมมิตร", "ส้มตำ & ตำนัว", 199, 75, "https://images.unsplash.com/photo-1603133872878-684f208fb84b?auto=format&fit=crop&w=600&q=80", "ตำถาดเครื่องแน่น แคบหมู หมูยออุบล ไข่ต้ม ขนมจีน ผักเคียงครบครัน"),
-        ("คอหมูย่างฉ่ำซอสน้ำจิ้มแจ่ว", "ย่าง & ทอด & ลาบ", 120, 48, "https://images.unsplash.com/photo-1544025162-d76694265947?auto=format&fit=crop&w=600&q=80", "คอหมูแท้แทรกมันย่างเตาถ่านหอมกรุ่น นุ่มฉ่ำ น้ำจิ้มแจ่วมะขามเปียก"),
-        ("ไก่ย่างสมุนไพรเขาสวนกวาง", "ย่าง & ทอด & ลาบ", 140, 55, "https://images.unsplash.com/photo-1626082927389-6cd097cdc6ec?auto=format&fit=crop&w=600&q=80", "ไก่บ้านหมักสมุนไพรไทย ย่างหนังกรอบเนื้อนุ่มฉ่ำ หอมกระเทียมพริกไทย"),
-        ("ลาบหมูสับตับหวานข้าวคั่ว", "ย่าง & ทอด & ลาบ", 95, 36, "https://images.unsplash.com/photo-1548943487-a2e4e43b4853?auto=format&fit=crop&w=600&q=80", "หมูสับคลุกตับลวก ข้าวคั่วใหม่หอมกรุ่นและสะระแหน่"),
-        ("ต้มแซ่บกระดูกอ่อนหมูใบกะเพรา", "ต้ม & ซดร้อน", 130, 45, "https://images.unsplash.com/photo-1589301760014-d929f3979dbc?auto=format&fit=crop&w=600&q=80", "กระดูกหมูอ่อนเคี่ยวจนเปื่อยนุ่ม ซุปสมุนไพรเปรี้ยวเผ็ดร้อน ซดคล่องคอ"),
-        ("ปีกไก่ทอดน้ำปลาหอมกรอบ", "ย่าง & ทอด & ลาบ", 90, 35, "https://images.unsplash.com/photo-1567620832903-9fc6debc209f?auto=format&fit=crop&w=600&q=80", "ปีกไก่ทอดกรอบสีทอง หอมน้ำปลาแท้ ไม่อมน้ำมัน"),
-        ("ข้าวเหนียวเขี้ยวงูอบนุ่ม", "ข้าว & เครื่องเคียง", 20, 6, "https://images.unsplash.com/photo-1598515214211-89d3c73ae83b?auto=format&fit=crop&w=600&q=80", "ข้าวเหนียวคัดเกรด เมล็ดเรียวยาว นึ่งร้อนๆ เหนียวนุ่ม"),
-        ("ขนมจีนแป้งหมัก", "ข้าว & เครื่องเคียง", 20, 6, "https://images.unsplash.com/photo-1612927601601-6638404737ce?auto=format&fit=crop&w=600&q=80", "เส้นขนมจีนนุ่มลื่น ทานคู่ส้มตำแซ่บๆ"),
-        ("แคบหมูไร้มันกรอบโบราณ", "ข้าว & เครื่องเคียง", 30, 10, "https://images.unsplash.com/photo-1541529086526-db283c563270?auto=format&fit=crop&w=600&q=80", "แคบหมูทอดกรอบไม่อมน้ำมัน เคี้ยวเพลิน"),
-        ("ชาไทยเย็นสูตรโบราณ", "เครื่องดื่ม & หวาน", 45, 14, "https://images.unsplash.com/photo-1558857563-b371033873b8?auto=format&fit=crop&w=600&q=80", "ชาใบเข้มข้น หอมมันนมสดแท้ ดับเผ็ดได้ดี"),
-        ("น้ำเก๊กฮวยต้มสมุนไพรสดชื่น", "เครื่องดื่ม & หวาน", 35, 10, "https://images.unsplash.com/photo-1513558161293-cdaf765ed2fd?auto=format&fit=crop&w=600&q=80", "เก๊กฮวยดอกแท้ต้มใบเตย หอมละมุน หวานน้อย")
-    ]
-    for item in fahsai_menu:
-        c.execute('INSERT OR REPLACE INTO menu_items (name, category, price, cost, image, description) VALUES (?, ?, ?, ?, ?, ?)', item)
+        # --- 1. หมวด "ตำนัว" ---
+        ("ตำไทย", "ตำนัว", 50, 18, "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=600&q=80", "รสเปรี้ยวหวานกลมกล่อม ถั่วคั่วใหม่ กุ้งแห้งเกรดเอ"),
+        ("ตำไทยไข่เค็ม", "ตำนัว", 60, 22, "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=600&q=80", "ตำไทยครบรส ท็อปไข่เค็มเต็มใบ มันนัวเข้ากัน"),
+        ("ตำไทยปู", "ตำนัว", 50, 18, "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=600&q=80", "ตำไทยรสเด็ด ใส่ปูดองเค็มสะอาด นัวกลมกล่อม"),
+        ("ตำไทยปูปลาร้า", "ตำนัว", 50, 18, "https://images.unsplash.com/photo-1569058242253-92a9c755a0ec?auto=format&fit=crop&w=600&q=80", "ตำไทยผสมน้ำปลาร้าต้มสุกสูตรเด็ด แซ่บนัวลงตัว"),
+        ("ตำปูปลาร้า", "ตำนัว", 50, 18, "https://images.unsplash.com/photo-1569058242253-92a9c755a0ec?auto=format&fit=crop&w=600&q=80", "เส้นมะละกอกรอบ ปลาร้าต้มสุกนัวเข้มข้น รสอีสานแท้"),
+        ("ตำปลาร้า", "ตำนัว", 45, 15, "https://images.unsplash.com/photo-1569058242253-92a9c755a0ec?auto=format&fit=crop&w=600&q=80", "ปลาร้านัวกลิ่นหอม รสแซ่บจัดจ้าน ซดน้ำส้มตำฟิน"),
+        ("ตำปู", "ตำนัว", 45, 15, "https://images.unsplash.com/photo-1569058242253-92a9c755a0ec?auto=format&fit=crop&w=600&q=80", "ตำปูเค็มสะอาด รสเปรี้ยวเผ็ดเค็มกำลังดี"),
+        ("ตำซั่ว", "ตำนัว", 50, 18, "https://images.unsplash.com/photo-1569058242253-92a9c755a0ec?auto=format&fit=crop&w=600&q=80", "ตำปลาร้าใส่เส้นขนมจีนนุ่มลื่น แคบหมูกรอบ"),
+        ("ตำแตง", "ตำนัว", 50, 18, "https://images.unsplash.com/photo-1540420773420-3366772f4999?auto=format&fit=crop&w=600&q=80", "แตงกวาสดกรอบฉ่ำน้ำ คลุกเคล้าน้ำปลาร้าแซ่บนัว"),
+        ("ตำถั่ว", "ตำนัว", 50, 18, "https://images.unsplash.com/photo-1540420773420-3366772f4999?auto=format&fit=crop&w=600&q=80", "ถั่วฝักยาวกรุบกรอบ ตำพริกแห้งและปลาร้าเข้มข้น"),
+        ("ตำมะม่วง", "ตำนัว", 50, 18, "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=600&q=80", "มะม่วงเปรี้ยวกำลังดี ตำใส่น้ำปลาร้า แซ่บจี๊ดถึงใจ"),
+        ("ตำข้าวโพด", "ตำนัว", 60, 22, "https://images.unsplash.com/photo-1559847844-5315695dadae?auto=format&fit=crop&w=600&q=80", "ข้าวโพดหวานเม็ดเต่ง ตำคลุกน้ำยำรสแซ่บกลมกล่อม"),
+        ("ตำข้าวโพดไข่เค็ม", "ตำนัว", 70, 26, "https://images.unsplash.com/photo-1559847844-5315695dadae?auto=format&fit=crop&w=600&q=80", "ข้าวโพดหวานมัน ท็อปไข่เค็มชิ้นโต นัวฟิน"),
+        ("ตำแครอท", "ตำนัว", 50, 18, "https://images.unsplash.com/photo-1540420773420-3366772f4999?auto=format&fit=crop&w=600&q=80", "เส้นแครอทส้มสดกรอบ ตำรสจัดจ้านเพื่อสุขภาพ"),
+        ("ตำถาด", "ตำนัว", 159, 60, "https://images.unsplash.com/photo-1603133872878-684f208fb84b?auto=format&fit=crop&w=600&q=80", "ตำถาดไซส์ใหญ่ เครื่องแน่น หมูยอ แคบหมู ไข่ต้ม ผักครบ"),
+        ("ตำทะเล", "ตำนัว", 120, 48, "https://images.unsplash.com/photo-1559847844-5315695dadae?auto=format&fit=crop&w=600&q=80", "กุ้ง ปลาหมึก หอยแครงสดลวก คลุกเคล้าน้ำส้มตำแซ่บ"),
+        ("ตำกุ้งสด", "ตำนัว", 100, 40, "https://images.unsplash.com/photo-1559847844-5315695dadae?auto=format&fit=crop&w=600&q=80", "กุ้งสดเนื้อเด้งหวานฉ่ำ เคล้าน้ำปลาร้านัวถึงใจ"),
+        ("ตำกุ้งสุก", "ตำนัว", 100, 40, "https://images.unsplash.com/photo-1559847844-5315695dadae?auto=format&fit=crop&w=600&q=80", "กุ้งลวกสุกพอดีเนื้อหวานเด้ง ตำรสเปรี้ยวเผ็ดกลมกล่อม"),
+        ("ตำหอยแครง", "ตำนัว", 100, 40, "https://images.unsplash.com/photo-1559847844-5315695dadae?auto=format&fit=crop&w=600&q=80", "หอยแครงสดลวกสะดุ้ง เนื้อหวานกรุบ ตำแซ่บนัว"),
+        ("ตำปูม้า", "ตำนัว", 120, 50, "https://images.unsplash.com/photo-1559847844-5315695dadae?auto=format&fit=crop&w=600&q=80", "ปูม้าสดเนื้อแน่นฉ่ำหวาน ตำรสจัดจ้านแซ่บสะท้าน"),
+        ("ตำปูม้าปลาร้า", "ตำนัว", 120, 50, "https://images.unsplash.com/photo-1569058242253-92a9c755a0ec?auto=format&fit=crop&w=600&q=80", "ปูม้าสดผสานน้ำปลาร้าต้มสุกสูตรพิเศษ นัวถึงเครื่อง"),
+        ("ตำรวมทะเล", "ตำนัว", 150, 60, "https://images.unsplash.com/photo-1559847844-5315695dadae?auto=format&fit=crop&w=600&q=80", "ยกทะเลมาไว้ในครก กุ้ง หมึก ปูม้า หอยแครง จัดเต็ม"),
 
-    recipes = [
-        ("ตำปูปลาร้านัวแซ่บ", "เส้นมะละกอดิบขูด", 180, "กรัม"),
-        ("ตำปูปลาร้านัวแซ่บ", "น้ำปลาร้าต้มสุก", 45, "มล."),
-        ("ตำปูปลาร้านัวแซ่บ", "มะนาวแป้นสด", 1, "ลูก"),
-        ("ตำไทยไข่เค็ม", "เส้นมะละกอดิบขูด", 180, "กรัม"),
-        ("ตำไทยไข่เค็ม", "ไข่เค็ม", 1, "ฟอง"),
-        ("ตำข้าวโพดกุ้งสด", "ข้าวโพดหวานต้ม", 150, "กรัม"),
-        ("ตำข้าวโพดกุ้งสด", "กุ้งสดแกะเปลือก", 4, "ตัว"),
-        ("ตำถาดฟ้าใสรวมมิตร", "เส้นมะละกอดิบขูด", 200, "กรัม"),
-        ("ตำถาดฟ้าใสรวมมิตร", "หมูยออุบล", 80, "กรัม"),
-        ("ตำถาดฟ้าใสรวมมิตร", "ไข่ต้ม", 1, "ฟอง"),
-        ("คอหมูย่างฉ่ำซอสน้ำจิ้มแจ่ว", "คอหมูสดหมัก", 220, "กรัม"),
-        ("ไก่ย่างสมุนไพรเขาสวนกวาง", "ไก่สดหมักสมุนไพร", 350, "กรัม"),
-        ("ลาบหมูสับตับหวานข้าวคั่ว", "หมูบดสด", 150, "กรัม"),
-        ("ต้มแซ่บกระดูกอ่อนหมูใบกะเพรา", "กระดูกหมูอ่อน", 200, "กรัม"),
-        ("ปีกไก่ทอดน้ำปลาหอมกรอบ", "ปีกไก่สด", 250, "กรัม"),
-        ("ข้าวเหนียวเขี้ยวงูอบนุ่ม", "ข้าวเหนียวดิบ", 120, "กรัม"),
-        ("ชาไทยเย็นสูตรโบราณ", "ใบชาไทย", 25, "กรัม")
+        # --- 2. หมวด "ตำแซ่บ" ---
+        ("ตำเหลาทะเล", "ตำแซ่บ", 140, 55, "https://images.unsplash.com/photo-1559847844-5315695dadae?auto=format&fit=crop&w=600&q=80", "เกาเหลาไม่ใส่เส้นมะละกอ ทะเลเน้นๆ น้ำยำแซ่บจี๊ด"),
+        ("ตำเหลาหมูยอ", "ตำแซ่บ", 80, 30, "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=600&q=80", "หมูยออุบลอย่างดีหั่นชิ้นหนา คลุกน้ำยำรสเด็ด"),
+        ("ตำเหลาหอยแครง", "ตำแซ่บ", 120, 48, "https://images.unsplash.com/photo-1559847844-5315695dadae?auto=format&fit=crop&w=600&q=80", "หอยแครงลวกไซส์พอดีคำ ตำเหลารสแซ่บซดน้ำนัว"),
+        ("ตำเหลากุ้งสด", "ตำแซ่บ", 120, 48, "https://images.unsplash.com/photo-1559847844-5315695dadae?auto=format&fit=crop&w=600&q=80", "กุ้งสดตัวโตเนื้อเด้ง ตำเหลาน้ำปลาร้าเข้มข้น"),
+        ("ตำเหลากุ้งสุก", "ตำแซ่บ", 120, 48, "https://images.unsplash.com/photo-1559847844-5315695dadae?auto=format&fit=crop&w=600&q=80", "กุ้งลวกสุกเนื้อเด้งหวาน คลุกน้ำส้มตำรสแซ่บ"),
+        ("ตำเหลาปูม้า", "ตำแซ่บ", 140, 55, "https://images.unsplash.com/photo-1559847844-5315695dadae?auto=format&fit=crop&w=600&q=80", "ปูม้าสดเนื้อแน่น ตำเหลาไม่ใส่เส้น เน้นเนื้อปูเต็มคำ"),
+        ("ตำเกาเหลากุ้งสด", "ตำแซ่บ", 120, 48, "https://images.unsplash.com/photo-1559847844-5315695dadae?auto=format&fit=crop&w=600&q=80", "เกาเหลากุ้งสดน้ำปลาร้า แซ่บจี๊ดพริกสด"),
+        ("ตำเกาเหลาทะเล", "ตำแซ่บ", 140, 55, "https://images.unsplash.com/photo-1559847844-5315695dadae?auto=format&fit=crop&w=600&q=80", "เกาเหลารวมมิตรทะเล กุ้ง หมึก หอย แซ่บถึงทรวง"),
+        ("ตำแซลมอน", "ตำแซ่บ", 150, 65, "https://images.unsplash.com/photo-1519708227418-c8fd9a32b7a2?auto=format&fit=crop&w=600&q=80", "แซลมอนสดนำเข้าเกรดซาชิมิ ตำน้ำยำรสเด็ดเข้มข้น"),
+        ("ตำแซลมอนกุ้งสด", "ตำแซ่บ", 160, 70, "https://images.unsplash.com/photo-1519708227418-c8fd9a32b7a2?auto=format&fit=crop&w=600&q=80", "แซลมอนเนื้อนุ่มและกุ้งสดเด้ง คู่หูความแซ่บ"),
+        ("ตำแซลมอนปูม้า", "ตำแซ่บ", 170, 75, "https://images.unsplash.com/photo-1519708227418-c8fd9a32b7a2?auto=format&fit=crop&w=600&q=80", "คอมโบสุดหรู แซลมอนสดและปูม้าเนื้อหวาน"),
+        ("ตำหมูยอ", "ตำแซ่บ", 60, 24, "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=600&q=80", "หมูยอเนื้อแน่นหอมพริกไทย ตำคลุกน้ำส้มตำนัว"),
+        ("ตำไส้กรอก", "ตำแซ่บ", 60, 24, "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=600&q=80", "ไส้กรอกไก่หนังกรอบ ตำรสเผ็ดเปรี้ยวหวาน"),
+        ("ตำเล็บมือนาง", "ตำแซ่บ", 70, 28, "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=600&q=80", "เล็บมือนางกรุบกรอบ เคี้ยวเพลิน รสแซ่บสะใจ"),
+        ("ตำขนมจีน", "ตำแซ่บ", 50, 18, "https://images.unsplash.com/photo-1612927601601-6638404737ce?auto=format&fit=crop&w=600&q=80", "เส้นขนมจีนนุ่มลื่น คลุกน้ำปลาร้าต้มสุกและพริกสด"),
+        ("ตำมาม่า", "ตำแซ่บ", 60, 22, "https://images.unsplash.com/photo-1569058242253-92a9c755a0ec?auto=format&fit=crop&w=600&q=80", "เส้นมาม่าลวกเหนียวนุ่ม ตำรสจัดจ้านเครื่องแน่น"),
+        ("ตำเส้นแก้ว", "ตำแซ่บ", 60, 22, "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=600&q=80", "เส้นแก้วกรุบกรอบ แคลอรีต่ำ ตำรสแซ่บนัว"),
+
+        # --- 3. หมวด "เพิ่มท็อปปิ้ง" ---
+        ("ไข่เค็ม", "เพิ่มท็อปปิ้ง", 15, 6, "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=600&q=80", "ไข่เค็มไชยา มันนัวเต็มใบ"),
+        ("ไข่เยี่ยวม้า", "เพิ่มท็อปปิ้ง", 20, 8, "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=600&q=80", "ไข่เยี่ยวม้าเนื้อเด้ง ทานคู่ส้มตำ"),
+        ("หมูยอ", "เพิ่มท็อปปิ้ง", 25, 10, "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=600&q=80", "หมูยออุบลแท้ ลวกพร้อมทาน"),
+        ("แคบหมู (ท็อปปิ้ง)", "เพิ่มท็อปปิ้ง", 20, 7, "https://images.unsplash.com/photo-1541529086526-db283c563270?auto=format&fit=crop&w=600&q=80", "แคบหมูกรอบไม่อมน้ำมัน"),
+        ("กุ้งสด", "เพิ่มท็อปปิ้ง", 40, 18, "https://images.unsplash.com/photo-1559847844-5315695dadae?auto=format&fit=crop&w=600&q=80", "กุ้งสดแกะเปลือกเนื้อหวานเด้ง"),
+        ("กุ้งสุก", "เพิ่มท็อปปิ้ง", 40, 18, "https://images.unsplash.com/photo-1559847844-5315695dadae?auto=format&fit=crop&w=600&q=80", "กุ้งลวกสุกเนื้อเด้งหวาน"),
+        ("ปูม้า", "เพิ่มท็อปปิ้ง", 50, 22, "https://images.unsplash.com/photo-1559847844-5315695dadae?auto=format&fit=crop&w=600&q=80", "ปูม้าสดเนื้อแน่นฉ่ำ"),
+        ("หอยแครง", "เพิ่มท็อปปิ้ง", 40, 18, "https://images.unsplash.com/photo-1559847844-5315695dadae?auto=format&fit=crop&w=600&q=80", "หอยแครงลวกสุกสะดุ้ง"),
+        ("เล็บมือนาง", "เพิ่มท็อปปิ้ง", 30, 12, "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=600&q=80", "เล็บมือนางต้มสุกกรุบกรอบ"),
+        ("ไส้กรอก", "เพิ่มท็อปปิ้ง", 25, 10, "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=600&q=80", "ไส้กรอกไก่ลวกหั่นชิ้น"),
+        ("แซลมอน", "เพิ่มท็อปปิ้ง", 60, 28, "https://images.unsplash.com/photo-1519708227418-c8fd9a32b7a2?auto=format&fit=crop&w=600&q=80", "แซลมอนสดหั่นเต๋าพร้อมทาน"),
+        ("ขนมจีน (ท็อปปิ้ง)", "เพิ่มท็อปปิ้ง", 15, 5, "https://images.unsplash.com/photo-1612927601601-6638404737ce?auto=format&fit=crop&w=600&q=80", "เส้นขนมจีนสดแป้งหมัก 1 จับ"),
+        ("มาม่า", "เพิ่มท็อปปิ้ง", 15, 5, "https://images.unsplash.com/photo-1569058242253-92a9c755a0ec?auto=format&fit=crop&w=600&q=80", "เส้นมาม่าลวกพร้อมทาน"),
+        ("เส้นแก้ว", "เพิ่มท็อปปิ้ง", 20, 8, "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=600&q=80", "เส้นแก้วกรุบกรอบ"),
+        ("ข้าวโพด", "เพิ่มท็อปปิ้ง", 20, 7, "https://images.unsplash.com/photo-1559847844-5315695dadae?auto=format&fit=crop&w=600&q=80", "ข้าวโพดหวานต้มสุกฝาน"),
+
+        # --- 4. หมวด "เมนูทอด" ---
+        ("ไก่ทอด", "เมนูทอด", 60, 24, "https://images.unsplash.com/photo-1626082927389-6cd097cdc6ec?auto=format&fit=crop&w=600&q=80", "ไก่ทอดกรอบนอกนุ่มใน หอมกระเทียมพริกไทย"),
+        ("ปีกไก่ทอด", "เมนูทอด", 70, 28, "https://images.unsplash.com/photo-1567620832903-9fc6debc209f?auto=format&fit=crop&w=600&q=80", "ปีกไก่ทอดกรอบสีทอง ไม่อมน้ำมัน"),
+        ("น่องไก่ทอด", "เมนูทอด", 70, 28, "https://images.unsplash.com/photo-1626082927389-6cd097cdc6ec?auto=format&fit=crop&w=600&q=80", "น่องไก่หมักเครื่องเทศ ทอดกรอบฉ่ำเนื้อใน"),
+        ("ปีกไก่ทอดน้ำปลา", "เมนูทอด", 80, 32, "https://images.unsplash.com/photo-1567620832903-9fc6debc209f?auto=format&fit=crop&w=600&q=80", "หมักน้ำปลาแท้อย่างดี หอมกรอบเค็มนิดๆ กลมกล่อม"),
+        ("หมูทอด", "เมนูทอด", 70, 28, "https://images.unsplash.com/photo-1544025162-d76694265947?auto=format&fit=crop&w=600&q=80", "หมูหมักสูตรโบราณ ทอดร้อนๆ ทานคู่ข้าวเหนียว"),
+        ("หมูแดดเดียว", "เมนูทอด", 80, 32, "https://images.unsplash.com/photo-1544025162-d76694265947?auto=format&fit=crop&w=600&q=80", "หมูแดดเดียวเนื้อนุ่มเคี้ยวเพลิน รสกลมกล่อม"),
+        ("เนื้อแดดเดียว", "เมนูทอด", 90, 38, "https://images.unsplash.com/photo-1555939594-58d7cb561ad1?auto=format&fit=crop&w=600&q=80", "เนื้อวัวคัดพิเศษ หมักสมุนไพรตากแดด ทอดหอมกรุ่น"),
+        ("คอหมูทอด", "เมนูทอด", 80, 32, "https://images.unsplash.com/photo-1544025162-d76694265947?auto=format&fit=crop&w=600&q=80", "คอหมูแทรกมันทอดกรอบนอกนุ่มใน น้ำจิ้มแจ่ว"),
+        ("สามชั้นทอดน้ำปลา", "เมนูทอด", 80, 32, "https://images.unsplash.com/photo-1544025162-d76694265947?auto=format&fit=crop&w=600&q=80", "หมูสามชั้นหนังกรอบเนื้อฉ่ำ คลุกน้ำปลาทอดหอมเตะจมูก"),
+        ("เอ็นไก่ทอด", "เมนูทอด", 80, 32, "https://images.unsplash.com/photo-1567620832903-9fc6debc209f?auto=format&fit=crop&w=600&q=80", "เอ็นข้อไก่คลุกงาทอด กรุบกรอบเคี้ยวมัน"),
+        ("หนังไก่ทอด", "เมนูทอด", 60, 22, "https://images.unsplash.com/photo-1567620832903-9fc6debc209f?auto=format&fit=crop&w=600&q=80", "หนังไก่ทอดกรอบสีทอง ไม่อมน้ำมัน ทานเพลิน"),
+        ("ไส้กรอกทอด", "เมนูทอด", 50, 18, "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=600&q=80", "ไส้กรอกแดงในตำนาน ทอดกรอบพองจิ้มน้ำจิ้ม"),
+        ("ลูกชิ้นทอด", "เมนูทอด", 50, 18, "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=600&q=80", "ลูกชิ้นหมูและเนื้อทอดรวม เสิร์ฟพร้อมน้ำจิ้มมะขาม"),
+        ("หมูยอทอด", "เมนูทอด", 60, 24, "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=600&q=80", "หมูยออุบลทอดสีทอง ผิวนอกตึงเนื้อในนุ่ม"),
+        ("แหนมทอด", "เมนูทอด", 70, 28, "https://images.unsplash.com/photo-1544025162-d76694265947?auto=format&fit=crop&w=600&q=80", "แหนมหมูรสเปรี้ยวกำลังดี ทอดหอมเสิร์ฟคู่พริกขิง"),
+
+        # --- 5. หมวด "เมนูย่าง" ---
+        ("คอหมูย่าง", "เมนูย่าง", 90, 36, "https://images.unsplash.com/photo-1544025162-d76694265947?auto=format&fit=crop&w=600&q=80", "คอหมูแท้แทรกมัน ย่างเตาถ่านหอมกรุ่น น้ำจิ้มแจ่วเด็ด"),
+        ("ไก่ย่าง", "เมนูย่าง", 80, 32, "https://images.unsplash.com/photo-1626082927389-6cd097cdc6ec?auto=format&fit=crop&w=600&q=80", "ไก่หมักสมุนไพรไทย ย่างหนังกรอบเนื้อนุ่มฉ่ำ"),
+        ("ปีกไก่ย่าง", "เมนูย่าง", 70, 28, "https://images.unsplash.com/photo-1567620832903-9fc6debc209f?auto=format&fit=crop&w=600&q=80", "ปีกไก่เสียบไม้ย่างเตาถ่าน หอมกระเทียมพริกไทย"),
+        ("เนื้อย่าง", "เมนูย่าง", 100, 42, "https://images.unsplash.com/photo-1555939594-58d7cb561ad1?auto=format&fit=crop&w=600&q=80", "เนื้อโคขุนคัดพิเศษ ย่างระดับมีเดียม น้ำจิ้มแจ่วขม/เปรี้ยว"),
+        ("หมูย่าง", "เมนูย่าง", 80, 32, "https://images.unsplash.com/photo-1544025162-d76694265947?auto=format&fit=crop&w=600&q=80", "หมูหมักนุ่มย่างไฟอ่อน หอมกรุ่นละมุนลิ้น"),
+        ("ไส้ย่าง", "เมนูย่าง", 80, 32, "https://images.unsplash.com/photo-1544025162-d76694265947?auto=format&fit=crop&w=600&q=80", "ไส้อ่อนล้างสะอาดไม่ขม ย่างเกรียมกำลังดี จิ้มแจ่ว"),
+        ("ตับย่าง", "เมนูย่าง", 70, 26, "https://images.unsplash.com/photo-1544025162-d76694265947?auto=format&fit=crop&w=600&q=80", "ตับหมักเครื่องเทศเสียบไม้ย่าง ไม่แห้งกระด้าง"),
+        ("ตับหมูย่าง", "เมนูย่าง", 70, 26, "https://images.unsplash.com/photo-1544025162-d76694265947?auto=format&fit=crop&w=600&q=80", "ตับหมูสดใหม่ย่างไฟหอมหวาน นุ่มละมุน"),
+        ("เสือร้องไห้", "เมนูย่าง", 120, 50, "https://images.unsplash.com/photo-1555939594-58d7cb561ad1?auto=format&fit=crop&w=600&q=80", "เนื้อติดมันย่างเตาถ่านในตำนาน กลิ่นหอมเย้ายวนใจ"),
+        ("หมูสามชั้นย่าง", "เมนูย่าง", 90, 36, "https://images.unsplash.com/photo-1544025162-d76694265947?auto=format&fit=crop&w=600&q=80", "สามชั้นย่างเกรียมหนังกรุบ มันหอมฉ่ำ"),
+        ("ไส้กรอกอีสานย่าง", "เมนูย่าง", 70, 28, "https://images.unsplash.com/photo-1544025162-d76694265947?auto=format&fit=crop&w=600&q=80", "ไส้กรอกอีสานเปรี้ยวกำลังดี ย่างเตาถ่านหนังกรอบ"),
+
+        # --- 6. หมวด "เมนูลาบ / น้ำตก" ---
+        ("ลาบหมู", "เมนูลาบ / น้ำตก", 70, 28, "https://images.unsplash.com/photo-1548943487-a2e4e43b4853?auto=format&fit=crop&w=600&q=80", "หมูสับคลุกข้าวคั่วใหม่ พริกป่น มะนาวสด หอมสะระแหน่"),
+        ("ลาบไก่", "เมนูลาบ / น้ำตก", 70, 28, "https://images.unsplash.com/photo-1548943487-a2e4e43b4853?auto=format&fit=crop&w=600&q=80", "เนื้อไก่สับนุ่ม คลุกเคล้าเครื่องลาบอีสานแท้"),
+        ("ลาบเนื้อ", "เมนูลาบ / น้ำตก", 80, 34, "https://images.unsplash.com/photo-1548943487-a2e4e43b4853?auto=format&fit=crop&w=600&q=80", "เนื้อวัวสับคลุกเครื่องลาบรสจัดจ้าน เลือกสุก/ดิบได้"),
+        ("ลาบปลาดุก", "เมนูลาบ / น้ำตก", 70, 28, "https://images.unsplash.com/photo-1548943487-a2e4e43b4853?auto=format&fit=crop&w=600&q=80", "ปลาดุกย่างแกะเนื้อสับ คลุกข้าวคั่วสมุนไพรหอมกรุ่น"),
+        ("ลาบทะเล", "เมนูลาบ / น้ำตก", 120, 50, "https://images.unsplash.com/photo-1559847844-5315695dadae?auto=format&fit=crop&w=600&q=80", "กุ้ง หมึก ลวกสะดุ้ง คลุกเครื่องลาบแซ่บจี๊ดจ๊าด"),
+        ("ลาบวุ้นเส้น", "เมนูลาบ / น้ำตก", 80, 32, "https://images.unsplash.com/photo-1548943487-a2e4e43b4853?auto=format&fit=crop&w=600&q=80", "วุ้นเส้นเหนียวนุ่มคลุกหมูสับและเครื่องลาบรสเข้ม"),
+        ("ลาบหมูทอด", "เมนูลาบ / น้ำตก", 80, 32, "https://images.unsplash.com/photo-1544025162-d76694265947?auto=format&fit=crop&w=600&q=80", "ลาบหมูปั้นก้อนทอดกรอบนอกนุ่มใน หอมเครื่องเทศ"),
+        ("น้ำตกหมู", "เมนูลาบ / น้ำตก", 80, 32, "https://images.unsplash.com/photo-1548943487-a2e4e43b4853?auto=format&fit=crop&w=600&q=80", "เนื้อหมูย่างนุ่มฉ่ำ คลุกน้ำยำน้ำตกรสแซ่วกลมกล่อม"),
+        ("น้ำตกเนื้อ", "เมนูลาบ / น้ำตก", 90, 38, "https://images.unsplash.com/photo-1555939594-58d7cb561ad1?auto=format&fit=crop&w=600&q=80", "เนื้อย่างติดมันหั่นชิ้น ปรุงน้ำตกรสแซ่บหอมข้าวคั่ว"),
+        ("น้ำตกคอหมูย่าง", "เมนูลาบ / น้ำตก", 90, 38, "https://images.unsplash.com/photo-1544025162-d76694265947?auto=format&fit=crop&w=600&q=80", "คอหมูย่างฉ่ำๆ คลุกเครื่องน้ำตกอีสานแท้ สุดยอดเมนู"),
+        ("ตับหวาน", "เมนูลาบ / น้ำตก", 80, 30, "https://images.unsplash.com/photo-1548943487-a2e4e43b4853?auto=format&fit=crop&w=600&q=80", "ตับหมูลวกสุกกำลังดีเนื้อหวานฉ่ำ คลุกข้าวคั่วรสแซ่บ"),
+        ("ซกเล็ก", "เมนูลาบ / น้ำตก", 90, 38, "https://images.unsplash.com/photo-1548943487-a2e4e43b4853?auto=format&fit=crop&w=600&q=80", "เมนูอีสานแท้รสเด็ด เครื่องเทศสมุนไพรครบครัน"),
+        ("ก้อยหมู", "เมนูลาบ / น้ำตก", 80, 32, "https://images.unsplash.com/photo-1548943487-a2e4e43b4853?auto=format&fit=crop&w=600&q=80", "ก้อยหมูรสแซ่บจัดจ้าน ถึงเครื่องสมุนไพรพื้นบ้าน"),
+        ("ก้อยเนื้อ", "เมนูลาบ / น้ำตก", 90, 38, "https://images.unsplash.com/photo-1555939594-58d7cb561ad1?auto=format&fit=crop&w=600&q=80", "ก้อยเนื้อวัวสดคลุกพริกป่นข้าวคั่ว เลือกขม/เปรี้ยวได้"),
+
+        # --- 7. หมวด "เมนูอีสาน" ---
+        ("ต้มแซ่บกระดูกอ่อน", "เมนูอีสาน", 100, 40, "https://images.unsplash.com/photo-1589301760014-d929f3979dbc?auto=format&fit=crop&w=600&q=80", "กระดูกหมูอ่อนเคี่ยวเปื่อยนุ่ม ซุปสมุนไพรเปรี้ยวเผ็ดร้อน"),
+        ("ต้มแซ่บหมู", "เมนูอีสาน", 90, 36, "https://images.unsplash.com/photo-1589301760014-d929f3979dbc?auto=format&fit=crop&w=600&q=80", "เนื้อหมูนุ่ม ซุปต้มยำสมุนไพรไทย ซดคล่องคอ"),
+        ("ต้มแซ่บเนื้อ", "เมนูอีสาน", 100, 42, "https://images.unsplash.com/photo-1589301760014-d929f3979dbc?auto=format&fit=crop&w=600&q=80", "เนื้อวัวตุ๋นยาจีนและสมุนไพร ซุปเปรี้ยวเผ็ดแซ่บสะใจ"),
+        ("ต้มแซ่บเอ็นแก้ว", "เมนูอีสาน", 110, 45, "https://images.unsplash.com/photo-1589301760014-d929f3979dbc?auto=format&fit=crop&w=600&q=80", "เอ็นแก้วตุ๋นจนนุ่มเด้งดึ๋ง ซุปต้มแซ่บร้อนๆ"),
+        ("ต้มแซ่บเครื่องใน", "เมนูอีสาน", 100, 40, "https://images.unsplash.com/photo-1589301760014-d929f3979dbc?auto=format&fit=crop&w=600&q=80", "เครื่องในวัว/หมูล้างสะอาด เปื่อยไม่คาว ซุปแซ่บ"),
+        ("แกงอ่อมหมู", "เมนูอีสาน", 90, 36, "https://images.unsplash.com/photo-1589301760014-d929f3979dbc?auto=format&fit=crop&w=600&q=80", "แกงอ่อมผักชีลาวและผักอีสาน น้ำปลาร้าขลุกขลิก"),
+        ("แกงอ่อมเนื้อ", "เมนูอีสาน", 100, 42, "https://images.unsplash.com/photo-1589301760014-d929f3979dbc?auto=format&fit=crop&w=600&q=80", "เนื้อวัวนุ่ม แกงอ่อมสมุนไพรกลิ่นหอมฟุ้ง"),
+        ("แกงอ่อมไก่", "เมนูอีสาน", 90, 36, "https://images.unsplash.com/photo-1589301760014-d929f3979dbc?auto=format&fit=crop&w=600&q=80", "ไก่บ้านสับแกงอ่อมผักรวม รสเข้มข้นกลมกล่อม"),
+        ("แกงเห็ด", "เมนูอีสาน", 80, 30, "https://images.unsplash.com/photo-1589301760014-d929f3979dbc?auto=format&fit=crop&w=600&q=80", "เห็ดหลากชนิดต้มน้ำใบย่านาง รสหวานธรรมชาติเพื่อสุขภาพ"),
+        ("ซุปหน่อไม้", "เมนูอีสาน", 60, 22, "https://images.unsplash.com/photo-1548943487-a2e4e43b4853?auto=format&fit=crop&w=600&q=80", "หน่อไม้ขูดเส้นปรุงน้ำใบย่านาง คลุกข้าวคั่วหอมๆ"),
+        ("ไส้กรอกอีสาน", "เมนูอีสาน", 70, 26, "https://images.unsplash.com/photo-1544025162-d76694265947?auto=format&fit=crop&w=600&q=80", "ไส้กรอกหมูเปรี้ยวกลมกล่อม เสิร์ฟพร้อมพริกขิงกะหล่ำ"),
+        ("แจ่วฮ้อน", "เมนูอีสาน", 199, 80, "https://images.unsplash.com/photo-1541832676-9b763b0239ab?auto=format&fit=crop&w=600&q=80", "ชุดหม้อไฟแจ่วฮ้อนอีสาน ซุปสมุนไพรเข้มข้น ชุดหมูและผักครบ"),
+
+        # --- 8. หมวด "ข้าว / เส้น" ---
+        ("ข้าวเหนียว", "ข้าว / เส้น", 15, 5, "https://images.unsplash.com/photo-1598515214211-89d3c73ae83b?auto=format&fit=crop&w=600&q=80", "ข้าวเหนียวเขี้ยวงูนึ่งร้อนๆ นุ่มเม็ดเรียวยาว"),
+        ("ข้าวสวย", "ข้าว / เส้น", 15, 5, "https://images.unsplash.com/photo-1598515214211-89d3c73ae83b?auto=format&fit=crop&w=600&q=80", "ข้าวหอมมะลิหุงนุ่ม หอมกรุ่น"),
+        ("ขนมจีน", "ข้าว / เส้น", 15, 5, "https://images.unsplash.com/photo-1612927601601-6638404737ce?auto=format&fit=crop&w=600&q=80", "เส้นขนมจีนสดแป้งหมัก นุ่มลื่น ทานคู่ส้มตำ"),
+        ("ข้าวเหนียวหมูทอด", "ข้าว / เส้น", 60, 24, "https://images.unsplash.com/photo-1544025162-d76694265947?auto=format&fit=crop&w=600&q=80", "เซ็ตอิ่มคุ้ม ข้าวเหนียวนุ่มคู่หมูทอดสูตรเด็ด"),
+        ("ข้าวเหนียวไก่ทอด", "ข้าว / เส้น", 60, 24, "https://images.unsplash.com/photo-1626082927389-6cd097cdc6ec?auto=format&fit=crop&w=600&q=80", "เซ็ตข้าวเหนียวกับไก่ทอดกรอบ หอมเจียวโรยหน้า"),
+        ("ข้าวคอหมูย่าง", "ข้าว / เส้น", 70, 28, "https://images.unsplash.com/photo-1544025162-d76694265947?auto=format&fit=crop&w=600&q=80", "ข้าวสวยร้อนๆ โปะคอหมูย่างฉ่ำๆ พร้อมน้ำจิ้มแจ่ว"),
+        ("ข้าวน้ำตกหมู", "ข้าว / เส้น", 70, 28, "https://images.unsplash.com/photo-1548943487-a2e4e43b4853?auto=format&fit=crop&w=600&q=80", "ข้าวราดน้ำตกหมูรสแซ่บ จัดจ้านถึงใจ"),
+        ("ข้าวลาบหมู", "ข้าว / เส้น", 70, 28, "https://images.unsplash.com/photo-1548943487-a2e4e43b4853?auto=format&fit=crop&w=600&q=80", "ข้าวสวยร้อนๆ ราดลาบหมูสับหอมข้าวคั่ว"),
+
+        # --- 9. หมวด "เครื่องเคียง" ---
+        ("ผักสด", "เครื่องเคียง", 15, 5, "https://images.unsplash.com/photo-1540420773420-3366772f4999?auto=format&fit=crop&w=600&q=80", "ชุดผักสดรวม สะอาด กรอบ ดับเผ็ดได้ดี"),
+        ("กะหล่ำปลี", "เครื่องเคียง", 15, 5, "https://images.unsplash.com/photo-1540420773420-3366772f4999?auto=format&fit=crop&w=600&q=80", "กะหล่ำปลีสดแช่เย็นกรอบ หวานฉ่ำ"),
+        ("ถั่วฝักยาว", "เครื่องเคียง", 15, 5, "https://images.unsplash.com/photo-1540420773420-3366772f4999?auto=format&fit=crop&w=600&q=80", "ถั่วฝักยาวสดคัดพิเศษ กรุบกรอบ"),
+        ("แตงกวา", "เครื่องเคียง", 15, 5, "https://images.unsplash.com/photo-1540420773420-3366772f4999?auto=format&fit=crop&w=600&q=80", "แตงกวาสดหั่นชิ้น แช่เย็นชื่นใจ"),
+        ("แคบหมู", "เครื่องเคียง", 20, 7, "https://images.unsplash.com/photo-1541529086526-db283c563270?auto=format&fit=crop&w=600&q=80", "แคบหมูไร้มันกรอบโบราณ ทานคู่ส้มตำ"),
+        ("ข้าวเกรียบ", "เครื่องเคียง", 20, 7, "https://images.unsplash.com/photo-1541529086526-db283c563270?auto=format&fit=crop&w=600&q=80", "ข้าวเกรียบกุ้งทอดกรอบ แผ่นใหญ่เคี้ยวเพลิน"),
+        ("ไข่ต้ม", "เครื่องเคียง", 10, 4, "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=600&q=80", "ไข่ไก่ต้มสุกกำลังดี 1 ฟอง"),
+
+        # --- 10. หมวด "เครื่องดื่ม" ---
+        ("น้ำเปล่า", "เครื่องดื่ม", 15, 6, "https://images.unsplash.com/photo-1551024709-8f23befc6f87?auto=format&fit=crop&w=600&q=80", "น้ำดื่มบริสุทธิ์ขวดเย็นชื่นใจ"),
+        ("น้ำแข็ง", "เครื่องดื่ม", 10, 3, "https://images.unsplash.com/photo-1551024709-8f23befc6f87?auto=format&fit=crop&w=600&q=80", "น้ำแข็งหลอดสะอาดใส่กระติก/แก้ว"),
+        ("น้ำอัดลม", "เครื่องดื่ม", 25, 12, "https://images.unsplash.com/photo-1551024709-8f23befc6f87?auto=format&fit=crop&w=600&q=80", "โคล่า/น้ำอัดลมกระป๋องเย็นซ่าสดชื่น"),
+        ("น้ำแดง", "เครื่องดื่ม", 25, 10, "https://images.unsplash.com/photo-1551024709-8f23befc6f87?auto=format&fit=crop&w=600&q=80", "น้ำหวานกลิ่นสละ หอมหวานเย็นชื่นใจ"),
+        ("น้ำเขียว", "เครื่องดื่ม", 25, 10, "https://images.unsplash.com/photo-1551024709-8f23befc6f87?auto=format&fit=crop&w=600&q=80", "น้ำหวานกลิ่นครีมโซดา สดชื่นดับกระหาย"),
+        ("ชามะนาว", "เครื่องดื่ม", 35, 12, "https://images.unsplash.com/photo-1558857563-b371033873b8?auto=format&fit=crop&w=600&q=80", "ชาดำแท้ผสมน้ำมะนาวคั้นสด เปรี้ยวหวานลงตัว"),
+        ("ชาเย็น", "เครื่องดื่ม", 35, 12, "https://images.unsplash.com/photo-1558857563-b371033873b8?auto=format&fit=crop&w=600&q=80", "ชาไทยแท้สูตรโบราณ หอมมันนมสดแท้ ดับเผ็ด"),
+        ("น้ำเก๊กฮวย", "เครื่องดื่ม", 30, 10, "https://images.unsplash.com/photo-1513558161293-cdaf765ed2fd?auto=format&fit=crop&w=600&q=80", "เก๊กฮวยต้มสมุนไพรแท้ หวานน้อยหอมสดชื่น"),
+        ("น้ำกระเจี๊ยบ", "เครื่องดื่ม", 30, 10, "https://images.unsplash.com/photo-1513558161293-cdaf765ed2fd?auto=format&fit=crop&w=600&q=80", "กระเจี๊ยบแดงต้มสด เปรี้ยวอมหวานชุ่มคอ"),
+        ("น้ำลำไย", "เครื่องดื่ม", 35, 12, "https://images.unsplash.com/photo-1513558161293-cdaf765ed2fd?auto=format&fit=crop&w=600&q=80", "น้ำลำไยเนื้อแน่น หวานหอมกลมกล่อม")
     ]
-    c.execute('DELETE FROM recipe_ingredients')
-    c.executemany('INSERT INTO recipe_ingredients (menu_name, ingredient_name, quantity_per_portion, unit) VALUES (?, ?, ?, ?)', recipes)
+    
+    # อัปเดตรายการอาหารให้ตรงกับชุดเมนูล่าสุด
+    c.execute('DELETE FROM menu_items')
+    c.executemany('INSERT OR REPLACE INTO menu_items (name, category, price, cost, image, description) VALUES (?, ?, ?, ?, ?, ?)', fahsai_menu)
+
     conn.commit()
     conn.close()
 
+
+# เรียกใช้งานเพื่อเตรียมฐานข้อมูลพร้อมใช้งานทันทีที่เริ่มโปรแกรม
 init_db()
 
-# ตรวจสอบการแยกโหมดผ่าน Query Parameter
+# ==============================================================================
+# 🔀 ตรวจสอบโหมดการแสดงผล (Admin หรือ ลูกค้า) ผ่าน URL Parameter
+# ==============================================================================
+# ตัวอย่าง:
+# - หน้าจัดการหลังร้าน: https://domain/?mode=admin
+# - หน้าร้าน/ลูกค้าสั่งอาหาร: https://domain/?table=1
 params = st.query_params
 is_admin_mode = (params.get("mode", "") == "admin")
 
+# ที่อยู่ไฟล์รูปภาพโลโก้ของร้านฟ้าใสตำนัว
 logo_path = "static/img/logo.png"
-if not os.path.exists(logo_path):
-    logo_path = "templates/img/logo.png"
+
+
+# ==============================================================================
+# 🛠️ ฟังก์ชันช่วยเหลือ (Utility / Helper Functions)
+# ==============================================================================
 
 def get_base64_image(image_path):
+    """
+    แปลงไฟล์รูปภาพ (เช่น PNG/JPG) เป็นข้อความ Base64
+    ประโยชน์: ช่วยให้แทรกภาพลงในแท็ก HTML <img> ได้โดยตรง 
+    ทำให้หน้าเว็บโหลดภาพขึ้นมาทันที ไม่ติดปัญหา Path หรือ CORS
+    """
     if image_path and os.path.exists(image_path):
         with open(image_path, "rb") as img_file:
             return base64.b64encode(img_file.read()).decode()
@@ -328,6 +491,13 @@ def get_base64_image(image_path):
 
 @st.cache_data
 def get_bell_sound_b64():
+    """
+    สังเคราะห์คลื่นเสียงกระดิ่งเตือน (Chime) ความถี่คู่ 784Hz และ 1046.5Hz ขึ้นมาใน RAM
+    แล้วบันทึกเป็น WAV ในหน่วยความจำโดยตรง
+    ประโยชน์:
+    - ไม่ต้องโหลดไฟล์เสียง MP3/WAV จากภายนอก
+    - ใช้ @st.cache_data เพื่อสร้างคลื่นเสียงเพียงครั้งเดียว แล้วเก็บแคชไว้ใช้งานซ้ำ
+    """
     sample_rate = 22050
     duration = 0.85
     n_samples = int(sample_rate * duration)
@@ -346,6 +516,10 @@ def get_bell_sound_b64():
     return base64.b64encode(buf.getvalue()).decode()
 
 def play_order_sound():
+    """
+    สั่งเล่นเสียงกระดิ่งเตือนในเบราว์เซอร์อัตโนมัติ (Autoplay)
+    เมื่อมีออเดอร์ใหม่ที่ลูกค้าเพิ่งสั่งเข้ามาในห้องครัว
+    """
     sound_b64 = get_bell_sound_b64()
     audio_html = f'''
     <audio autoplay style="display:none;">
@@ -359,6 +533,7 @@ def play_order_sound():
     </script>
     '''
     st.markdown(audio_html, unsafe_allow_html=True)
+
 
 # ==============================================================================
 # 🧾 ฟังก์ชันสร้างใบเสร็จรับเงินอย่างย่อ (HTML / Print / PDF)
@@ -778,8 +953,13 @@ def render_pos_dashboard():
     conn.close()
 
 # ==============================================================================
-# 🔴 ฝั่งร้านค้า (เคาน์เตอร์ & ครัว & รายงาน) -> https://.../?mode=admin
+# 🔴 ฝั่งร้านค้า (เคาน์เตอร์ & ครัว & เมนูขายดี) -> https://.../?mode=admin
 # ==============================================================================
+# หน้านี้สำหรับพนักงานและเจ้าของร้าน โดยเข้าใช้งานผ่านการเติม ?mode=admin ท้าย URL
+# ประกอบด้วย 3 แท็บหลัก:
+# 1. จัดการโต๊ะอาหาร & เคลียร์โต๊ะ (พร้อมสร้าง QR Code)
+# 2. จอครัว & เคาน์เตอร์คิดเงิน (KDS)
+# 3. อันดับเมนูขายดี
 if is_admin_mode:
     # Header ปรับขนาดภาพโลโก้ให้ใหญ่ขึ้น สวยงาม คมชัด จัดกลางอย่างลงตัว
     logo_b64 = get_base64_image(logo_path)
@@ -800,19 +980,24 @@ if is_admin_mode:
         ฟ้าใสตำนัว (ระบบจัดการหลังร้าน)
     </h1>
     <p style="text-align: center; color: #78716c; font-size: 1.05rem; margin: 0 0 14px 0;">
-        👨‍🍳 หน้าจอเคาน์เตอร์คิดเงิน • ครัวปรุงอาหาร • รายงานสต็อกวัตถุดิบ
+        👨‍🍳 หน้าจอเคาน์เตอร์คิดเงิน • ครัวปรุงอาหาร • อันดับเมนูขายดี
     </p>
     '''
     st.markdown(header_html, unsafe_allow_html=True)
 
     st.write("---")
 
+    # แยก 3 แท็บสำหรับจัดการหลังร้าน
     tab_tbl, tab_pos, tab_rep = st.tabs([
         "🪑 จัดการโต๊ะอาหาร & เคลียร์โต๊ะ", 
         "🍳 จอครัว & เคาน์เตอร์คิดเงิน", 
         "🏆 เมนูขายดี"
     ])
 
+
+    # --------------------------------------------------------------------------
+    # แท็บที่ 1: 🪑 จัดการโต๊ะอาหาร & เคลียร์โต๊ะ (พร้อมสร้าง QR-Code)
+    # --------------------------------------------------------------------------
     with tab_tbl:
         st.subheader("🪑 จัดการโต๊ะอาหาร & เคลียร์โต๊ะ (พร้อมสร้าง QR-Code)")
         st.caption("เพิ่มหรือลบโต๊ะอาหารในร้าน สร้าง QR-Code ติดโต๊ะให้ลูกค้าสแกนสั่งอาหาร และกดล้างสถานะโต๊ะเพื่อรับลูกค้ารายใหม่")
@@ -820,6 +1005,8 @@ if is_admin_mode:
         conn_tb = sqlite3.connect(DB_NAME)
         c_tb = conn_tb.cursor()
         
+        # ดึงรายชื่อโต๊ะทั้งหมด พร้อมนับจำนวนออเดอร์ค้าง (active_orders) และบิลที่จ่ายเงินแล้วรอเคลียร์ (paid_orders)
+        # ใช้ LEFT JOIN เพื่อให้โต๊ะที่ยังไม่มีออเดอร์ยังคงแสดงผลขึ้นมาได้
         c_tb.execute("""
             SELECT t.table_number, t.name,
                    COUNT(CASE WHEN o.status NOT IN ('paid', 'archived') THEN 1 END) as active_orders,
@@ -830,6 +1017,7 @@ if is_admin_mode:
             ORDER BY t.table_number ASC
         """)
         table_statuses = c_tb.fetchall()
+
         existing_nums = [r[0] for r in table_statuses]
         
         # กล่องตั้งค่าลิงก์ร้าน (Base URL) สำหรับสร้าง QR-Code
@@ -960,16 +1148,23 @@ if is_admin_mode:
 
         conn_tb.close()
 
-
+    # --------------------------------------------------------------------------
+    # แท็บที่ 2: 🍳 จอครัว & เคาน์เตอร์คิดเงิน (Kitchen POS Dashboard)
+    # --------------------------------------------------------------------------
     with tab_pos:
+        # เรียกใช้ฟังก์ชัน fragment ที่รีเฟรชออเดอร์อัตโนมัติทุก 3 วินาที
         render_pos_dashboard()
 
+    # --------------------------------------------------------------------------
+    # แท็บที่ 3: 🏆 อันดับเมนูขายดี (Best Selling Menus Dashboard)
+    # --------------------------------------------------------------------------
     with tab_rep:
         st.subheader("🏆 อันดับเมนูขายดี (Best Selling Menus)")
         st.caption("จัดอันดับเมนูยอดนิยมของฟ้าใสตำนัว ตามจำนวนจานและยอดขายรวม")
         
         conn_bs = sqlite3.connect(DB_NAME)
         c_bs = conn_bs.cursor()
+
         
         # ตัวกรองช่วงเวลาและการเรียงลำดับ
         c_f1, c_f2 = st.columns([1.5, 2])
@@ -1092,8 +1287,15 @@ if is_admin_mode:
         conn_bs.close()
 
 # ==============================================================================
-# 🟢 ฝั่งลูกค้าสั่งอาหารที่โต๊ะ -> https://.../?table=1
+# 🟢 ฝั่งลูกค้าสั่งอาหารที่โต๊ะ (Customer Menu & Ordering View)
 # ==============================================================================
+# ทำงานเมื่อลูกค้าสแกน QR Code เข้ามา เช่น https://domain/?table=1
+# หน้าที่หลัก:
+# 1. ตรวจสอบหมายเลขโต๊ะจาก URL Query Parameter (?table=N)
+# 2. แสดงรายการอาหารแยกตามหมวดหมู่ พร้อมรูปภาพและราคา
+# 3. จัดการตะกร้าสินค้าแบบเรียลไทม์ (บันทึกใน st.session_state)
+# 4. บันทึกคำสั่งซื้อเข้าห้องครัว (บันทึกลงตาราง orders และ order_items)
+# 5. ติดตามสถานะอาหารแบบเรียลไทม์ (Auto-refresh ทุก 3 วินาที)
 else:
     table_from_param = params.get("table", None)
     conn_chk = sqlite3.connect(DB_NAME)
@@ -1116,7 +1318,7 @@ else:
     else:
         logo_html = '<div style="text-align: center; font-size: 55px; margin-bottom: 4px;">🌶️</div>'
 
-    # กรณีทางร้านยังไม่ได้เปิดโต๊ะใดๆ
+    # กรณีทางร้านยังไม่ได้เปิดโต๊ะใดๆ (0 โต๊ะเริ่มต้น)
     if not valid_tables:
         header_html = f'''
         {logo_html}
@@ -1135,6 +1337,7 @@ else:
         st.stop()
         valid_tables = [1]
 
+    # กำหนดหมายเลขโต๊ะปัจจุบัน (หาก URL ไม่ได้ระบุ ให้เลือกโต๊ะแรกในระบบ)
     current_table_num = None
     if table_from_param is not None:
         try:
@@ -1166,9 +1369,14 @@ else:
     st.markdown(header_html, unsafe_allow_html=True)
     st.write("---")
 
+    # ==========================================================================
+    # 🛒 ฟังก์ชันจัดการตะกร้าสินค้า (Cart Callbacks)
+    # ==========================================================================
+    # เก็บข้อมูลใน st.session_state.cart เพื่อไม่ให้หายเวลากดเพิ่ม/ลดรายการ
+    # โครงสร้าง: { 'ชื่ออาหาร': {'price': ราคา, 'qty': จำนวน, 'note': โน้ตพิเศษ} }
 
-    # ฟังก์ชัน Callback สำหรับจัดการตะกร้าแบบเรียลไทม์ (Instant & Stable)
     def add_to_cart_item(item_name, item_price):
+        """เพิ่มจำนวนอาหารในตะกร้า (+1) หรือเพิ่มรายการใหม่ลงตะกร้า"""
         if 'cart' not in st.session_state:
             st.session_state.cart = {}
         if item_name in st.session_state.cart:
@@ -1177,6 +1385,7 @@ else:
             st.session_state.cart[item_name] = {'price': item_price, 'qty': 1, 'note': ''}
 
     def dec_from_cart_item(item_name):
+        """ลดจำนวนอาหารในตะกร้า (-1) หากเหลือ 0 จะลบรายการออกอัตโนมัติ"""
         if 'cart' in st.session_state and item_name in st.session_state.cart:
             if st.session_state.cart[item_name]['qty'] > 1:
                 st.session_state.cart[item_name]['qty'] -= 1
@@ -1184,11 +1393,13 @@ else:
                 del st.session_state.cart[item_name]
 
     def del_from_cart_item(item_name):
+        """ลบรายการอาหารชิ้นนั้นออกจากตะกร้าทันที"""
         if 'cart' in st.session_state and item_name in st.session_state.cart:
             del st.session_state.cart[item_name]
 
     if 'cart' not in st.session_state:
         st.session_state.cart = {}
+
 
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
@@ -1197,17 +1408,34 @@ else:
         FROM menu_items 
         ORDER BY 
             CASE category 
-                WHEN 'ส้มตำ & ตำนัว' THEN 1 
-                WHEN 'ย่าง & ทอด & ลาบ' THEN 2 
-                WHEN 'ต้ม & ซดร้อน' THEN 3 
-                WHEN 'ข้าว & เครื่องเคียง' THEN 4 
-                WHEN 'เครื่องดื่ม & หวาน' THEN 5 
-                ELSE 6 
+                WHEN 'ตำนัว' THEN 1 
+                WHEN 'ตำแซ่บ' THEN 2 
+                WHEN 'เมนูทอด' THEN 3 
+                WHEN 'เมนูย่าง' THEN 4 
+                WHEN 'เมนูลาบ / น้ำตก' THEN 5 
+                WHEN 'เมนูอีสาน' THEN 6 
+                WHEN 'ข้าว / เส้น' THEN 7 
+                WHEN 'เพิ่มท็อปปิ้ง' THEN 8 
+                WHEN 'เครื่องเคียง' THEN 9 
+                WHEN 'เครื่องดื่ม' THEN 10 
+                ELSE 11 
             END, id ASC
     ''')
     all_menus = c.fetchall()
     
-    cat_order_list = ["ส้มตำ & ตำนัว", "ย่าง & ทอด & ลาบ", "ต้ม & ซดร้อน", "ข้าว & เครื่องเคียง", "เครื่องดื่ม & หวาน"]
+    cat_order_list = [
+        "ตำนัว", 
+        "ตำแซ่บ", 
+        "เมนูทอด", 
+        "เมนูย่าง", 
+        "เมนูลาบ / น้ำตก", 
+        "เมนูอีสาน", 
+        "ข้าว / เส้น", 
+        "เพิ่มท็อปปิ้ง", 
+        "เครื่องเคียง", 
+        "เครื่องดื่ม"
+    ]
+
     available_cats = list(set(m[2] for m in all_menus))
     categories = [cat for cat in cat_order_list if cat in available_cats]
     for cat in available_cats:
@@ -1287,15 +1515,21 @@ else:
                     with c_p:
                         st.button("➕", key=f"btn_inc_card_{m_id}", on_click=add_to_cart_item, args=(name, price), use_container_width=True, type="primary")
 
-    # ตรวจสอบสถานะอาหารที่สั่งไปแล้วของโต๊ะนี้ (ระบบเรียลไทม์ Auto-Refresh ทุก 3 วินาที)
+    # ==========================================================================
+    # 📋 ระบบติดตามสถานะอาหารของโต๊ะนี้ (Live Order Tracking Fragment)
+    # ==========================================================================
+    # ใช้ @st.fragment(run_every=3) เพื่อให้อัปเดตสถานะแบบเรียลไทม์ทุก 3 วินาที
+    # ลูกค้าจะเห็น Progress Bar ขยับตามขั้นตอน:
+    # ⏳ รอร้านรับออเดอร์ (25%) -> 🍳 ครัวกำลังปรุง (45%) -> 🍲 กำลังทยอยเสิร์ฟ (75%) -> 🍽️ เสิร์ฟครบแล้ว (100%)
     st.write("---")
     
     @st.fragment(run_every=3)
     def render_table_order_tracking(table_num):
+        """แสดงรายการอาหารที่โต๊ะนี้สั่ง พร้อมแถบความคืบหน้าแบบ Real-time"""
         conn_trk = sqlite3.connect(DB_NAME)
         c_trk = conn_trk.cursor()
         
-        # ดึงออเดอร์ล่าสุดของโต๊ะนี้ที่ไม่ใช่ archived
+        # ดึงออเดอร์ล่าสุดของโต๊ะนี้ที่ไม่ใช่ archived (ที่ยังทานอยู่ หรือเพิ่งเช็คบิล)
         c_trk.execute("""
             SELECT id, status, total_price, created_at 
             FROM orders 
@@ -1311,6 +1545,7 @@ else:
         with col_t_btn:
             if st.button("🔄 รีเฟรช", key=f"btn_ref_table_{table_num}", use_container_width=True):
                 st.rerun()
+
 
         if not cur_orders:
             st.info("ยังไม่มีรายการอาหารที่สั่งในขณะนี้ค่ะ สามารถเลือกเมนูแซ่บๆ ด้านบนแล้วส่งเข้าครัวได้เลยนะคะ 🌶️")
