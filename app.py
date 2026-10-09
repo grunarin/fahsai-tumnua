@@ -536,6 +536,22 @@ def play_order_sound():
 
 
 # ==============================================================================
+# 📌 ฟังก์ชันแสดง Footer เครดิตผู้พัฒนาระบบ
+# ==============================================================================
+def render_app_footer():
+    """แสดง Footer เครดิตผู้พัฒนาระบบด้านล่างสุดของหน้าจอ จัดกึ่งกลาง"""
+    st.write("---")
+    footer_html = """
+    <div style="text-align: center; margin-top: 25px; margin-bottom: 25px; padding: 15px 10px; color: #4b5563; line-height: 1.8;">
+        <div style="font-weight: 700; color: #c2410c; font-size: 1.05rem;">ระบบสั่งอาหารโต๊ะผ่าน QR Code</div>
+        <div style="color: #374151; font-weight: 500;">พัฒนา โดย นางสาวชญาดา สิงหวัฒน์</div>
+        <div style="color: #6b7280; font-size: 0.95rem;">อีเมล์ : chayada.sing@kkumail.com &nbsp;&nbsp;&nbsp;&nbsp; โทรศัพท์ : 093-773-4851</div>
+    </div>
+    """
+    st.markdown(footer_html, unsafe_allow_html=True)
+
+
+# ==============================================================================
 # 🧾 ฟังก์ชันสร้างใบเสร็จรับเงินอย่างย่อ (HTML / Print / PDF)
 # ==============================================================================
 def get_payment_qr_base64():
@@ -687,7 +703,7 @@ def generate_receipt_html(order_id, table_id, items, total_price, order_time):
             <div style="font-size: 18px; font-weight: bold; color: #c2410c;">🌶️ ฟ้าใสตำนัว</div>
             <div style="font-size: 11px; color: #444;">(FAHSAI TUM NUA)</div>
             <div style="font-size: 12px; margin-top: 3px; font-weight: bold;">ใบเสร็จรับเงิน / ใบกำกับภาษีอย่างย่อ</div>
-            <div style="font-size: 11px; color: #666;">โทร. 089-999-9999 • ยินดีให้บริการ</div>
+            <div style="font-size: 11px; color: #666;">โทร. 093-773-4851 • ยินดีให้บริการ</div>
         </div>
         
         <div class="dashed"></div>
@@ -1328,6 +1344,9 @@ if is_admin_mode:
                             st.caption(f"ยอดรวม: ฿{int(csales):,}")
         conn_bs.close()
 
+    # Footer ล่างสุดสำหรับหน้าระบบจัดการหลังร้าน (?mode=admin)
+    render_app_footer()
+
 # ==============================================================================
 # 🟢 ฝั่งลูกค้าสั่งอาหารที่โต๊ะ (Customer Menu & Ordering View)
 # ==============================================================================
@@ -1657,3 +1676,6 @@ else:
 
     render_table_order_tracking(current_table_num)
     conn.close()
+
+    # Footer ล่างสุดสำหรับฝั่งลูกค้า
+    render_app_footer()
