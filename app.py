@@ -538,10 +538,53 @@ def play_order_sound():
 # ==============================================================================
 # 🧾 ฟังก์ชันสร้างใบเสร็จรับเงินอย่างย่อ (HTML / Print / PDF)
 # ==============================================================================
+def get_payment_qr_base64():
+    """ดึงรูปภาพ QR ธนาคาร/พร้อมเพย์ (payment.jpg) จากโฟลเดอร์ static มาแปลงเป็น Base64 สำหรับแสดงในใบเสร็จ HTML"""
+    possible_paths = [
+        os.path.join(os.path.dirname(__file__), "static", "img", "payment.jpg"),
+        os.path.join(os.path.dirname(__file__), "static", "payment.jpg"),
+        os.path.join("static", "img", "payment.jpg"),
+        os.path.join("static", "payment.jpg"),
+    ]
+    for p in possible_paths:
+        if os.path.exists(p):
+            try:
+                with open(p, "rb") as f:
+                    return base64.b64encode(f.read()).decode("utf-8")
+            except Exception:
+                pass
+    return ""
+
+
 def generate_receipt_html(order_id, table_id, items, total_price, order_time):
     total_qty = sum(item[1] for item in items)
     vat_included = round(total_price * 7 / 107, 2)
     before_vat = round(total_price - vat_included, 2)
+    
+    # แปลงภาพ QR ธนาคาร (payment.jpg) เป็น Base64 เพื่อฝังลงในใบเสร็จ
+    qr_b64 = get_payment_qr_base64()
+    if qr_b64:
+        qr_payment_html = f"""
+        <div class="dashed"></div>
+        <div class="text-center" style="margin: 8px 0;">
+            <div style="font-size: 13px; font-weight: bold; color: #1e3a8a; margin-bottom: 2px;">
+                📲 สแกน QR เพื่อชำระเงิน
+            </div>
+            <div style="font-size: 11px; color: #64748b; margin-bottom: 6px;">
+                (PromptPay / สแกนผ่านแอปธนาคาร)
+            </div>
+            <div style="display: flex; justify-content: center; align-items: center; margin: 4px 0;">
+                <img src="data:image/jpeg;base64,{qr_b64}" 
+                     style="width: 175px; max-width: 90%; height: auto; border: 1.5px solid #cbd5e1; border-radius: 8px; padding: 4px; background: #fff; box-shadow: 0 2px 6px rgba(0,0,0,0.06);" 
+                     alt="QR ธนาคารชำระเงิน" />
+            </div>
+            <div style="font-size: 12px; color: #1e293b; margin-top: 5px;">
+                ยอดที่ต้องชำระ: <strong style="color: #c2410c; font-size: 14px;">฿{int(total_price):,}</strong>
+            </div>
+        </div>
+        """
+    else:
+        qr_payment_html = ""
     
     items_rows_html = ""
     for idx, item in enumerate(items, 1):
@@ -579,6 +622,9 @@ def generate_receipt_html(order_id, table_id, items, total_price, order_time):
             }}
             .no-print {{
                 display: none !important;
+            }}
+            img {{
+                max-width: 48mm !important;
             }}
         }}
         body {{
@@ -691,10 +737,12 @@ def generate_receipt_html(order_id, table_id, items, total_price, order_time):
             </tr>
         </table>
         
+        {qr_payment_html}
+        
         <div class="double-line"></div>
         
         <div class="text-center" style="font-size: 11px; color: #444;">
-            <div>ชำระโดย: เงินสด / โอนเงิน PromptPay</div>
+            <div>ชำระโดย: เงินสด / โอนเงินผ่าน QR ธนาคาร</div>
             <div style="margin-top: 4px; font-weight: bold; color: #111;">ขอบพระคุณที่มาอุดหนุนค่ะ 🙏</div>
             <div>โอกาสหน้าเชิญใหม่นะคะ แซ่บนัวทุกจาน!</div>
         </div>
@@ -720,7 +768,7 @@ def render_receipt_box(oid, conn):
         st.markdown(f"### 🧾 ใบเสร็จรับเงินอย่างย่อ — โต๊ะที่ {t_id} (บิล #{oid})")
         st.caption("สามารถกดปุ่ม **🖨️ สั่งพิมพ์ใบเสร็จ / บันทึกเป็น PDF** ด้านล่างนี้ หรือดาวน์โหลดไฟล์ได้ทันทีค่ะ")
         
-        components.html(receipt_html, height=490, scrolling=True)
+        components.html(receipt_html, height=750, scrolling=True)
         
         rc1, rc2, rc3 = st.columns([1.5, 1.5, 1])
         with rc1:
@@ -1020,14 +1068,8 @@ if is_admin_mode:
 
         existing_nums = [r[0] for r in table_statuses]
         
-        # กล่องตั้งค่าลิงก์ร้าน (Base URL) สำหรับสร้าง QR-Code
-        default_base_url = "https://fahsai-tumnua-xwwixnezbpyxzpwvkvhad3.streamlit.app"
-        with st.expander("⚙️ ตั้งค่าลิงก์ร้านสำหรับสร้าง QR-Code (URL ปลายทาง)", expanded=False):
-            st.caption("ระบบใช้ลิงก์นี้เป็นค่าเริ่มต้นสำหรับสร้าง QR-Code ติดโต๊ะอาหาร หากรันบนโดเมนอื่นสามารถปรับแก้ได้ค่ะ")
-            custom_base_url = st.text_input("ลิงก์หน้าเว็บร้าน (Base URL):", value=st.session_state.get('base_url_qr', default_base_url), key="input_base_url_qr")
-            st.session_state['base_url_qr'] = custom_base_url.rstrip("/")
-        
-        base_url_for_qr = st.session_state.get('base_url_qr', default_base_url).rstrip("/")
+        # ลิงก์ร้านสำหรับสร้าง QR-Code อัตโนมัติ
+        base_url_for_qr = "https://fahsai-tumnua-xwwixnezbpyxzpwvkvhad3.streamlit.app"
 
         # ส่วนที่ 1: เมนู เพิ่ม / ลบ โต๊ะอาหารในร้าน
         st.markdown("### ⚙️ 1. เพิ่ม / ลบ โต๊ะอาหารในร้าน")
@@ -1603,6 +1645,14 @@ else:
                             else:
                                 st_badge = ":orange[**[⏳ กำลังปรุง]**]"
                             st.markdown(f"• **{iname}** x{iqty}{note_text} — {st_badge}")
+                    
+                    # ตัวเลือกให้ลูกค้าสแกนจ่ายเงินผ่าน QR ธนาคารได้สะดวกจากที่โต๊ะ
+                    if status != 'paid':
+                        with st.expander("📲 สแกน QR ชำระเงิน (PromptPay / ธนาคาร)", expanded=(status == 'served')):
+                            p_img = "static/payment.jpg" if os.path.exists("static/payment.jpg") else "static/img/payment.jpg"
+                            if os.path.exists(p_img):
+                                st.image(p_img, caption=f"สแกนชำระเงินยอด ฿{int(total):,} (บิล #{oid})", width=220)
+                                st.caption("💡 เมื่อสแกนชำระเงินเรียบร้อยแล้ว แจ้งพนักงานเพื่อเช็คบิลได้เลยนะคะ 🙏")
             conn_trk.close()
 
     render_table_order_tracking(current_table_num)
