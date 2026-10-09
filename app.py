@@ -289,12 +289,39 @@ def init_db():
         )
     ''')
 
+    # 5. ตารางสมาชิกสะสมแต้ม (members)
+    # เก็บข้อมูลสมาชิก: ชื่อ, นามสกุล, หมายเลขโทรศัพท์ และคะแนนสะสม
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS members (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            first_name TEXT NOT NULL,           -- ชื่อสมาชิก
+            last_name TEXT NOT NULL,            -- นามสกุล
+            phone TEXT NOT NULL UNIQUE,         -- หมายเลขโทรศัพท์ (ห้ามซ้ำ)
+            points INTEGER DEFAULT 0,           -- คะแนนสะสม
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP -- วันเวลาที่สมัครสมาชิก
+        )
+    ''')
+
     # ตรวจสอบและอัปเกรดคอลัมน์ status ในตาราง order_items แบบอัตโนมัติ (Backward Compatibility)
     c.execute("PRAGMA table_info(order_items)")
     existing_cols = [col[1] for col in c.fetchall()]
     if 'status' not in existing_cols:
         c.execute("ALTER TABLE order_items ADD COLUMN status TEXT DEFAULT 'pending'")
     c.execute("UPDATE order_items SET status = 'pending' WHERE status IS NULL")
+
+    # ตรวจสอบและอัปเกรดคอลัมน์ระบบสมาชิกและส่วนลดในตาราง orders แบบอัตโนมัติ
+    c.execute("PRAGMA table_info(orders)")
+    order_cols = [col[1] for col in c.fetchall()]
+    if 'subtotal' not in order_cols:
+        c.execute("ALTER TABLE orders ADD COLUMN subtotal REAL DEFAULT 0")
+    if 'discount' not in order_cols:
+        c.execute("ALTER TABLE orders ADD COLUMN discount REAL DEFAULT 0")
+    if 'points_used' not in order_cols:
+        c.execute("ALTER TABLE orders ADD COLUMN points_used INTEGER DEFAULT 0")
+    if 'points_earned' not in order_cols:
+        c.execute("ALTER TABLE orders ADD COLUMN points_earned INTEGER DEFAULT 0")
+    if 'member_phone' not in order_cols:
+        c.execute("ALTER TABLE orders ADD COLUMN member_phone TEXT DEFAULT NULL")
 
     # บันทึกชุดเมนูอาหารทั้งหมดของร้าน "ฟ้าใสตำนัว" (10 หมวดหมู่ 131 เมนูแซ่บ)
     fahsai_menu = [
@@ -572,8 +599,10 @@ def get_payment_qr_base64():
     return ""
 
 
-def generate_receipt_html(order_id, table_id, items, total_price, order_time):
+def generate_receipt_html(order_id, table_id, items, total_price, order_time, subtotal=None, discount=0, points_used=0, points_earned=0, member_phone=None, member_name=None, remaining_points=None):
     total_qty = sum(item[1] for item in items)
+    if subtotal is None or subtotal <= 0:
+        subtotal = total_price + discount
     vat_included = round(total_price * 7 / 107, 2)
     before_vat = round(total_price - vat_included, 2)
     
@@ -617,6 +646,32 @@ def generate_receipt_html(order_id, table_id, items, total_price, order_time):
         </tr>
         """
         
+    # ข้อมูลสมาชิกสะสมแต้มในใบเสร็จ
+    member_info_html = ""
+    if member_phone:
+        pts_used_txt = f"<div>• ใช้คะแนนแลกส่วนลด: <strong>{points_used}</strong> แต้ม (-฿{int(discount):,})</div>" if points_used > 0 else ""
+        rem_pts_txt = f"<div>• คะแนนสะสมคงเหลือ: <strong style='color: #ea580c;'>{remaining_points}</strong> แต้ม</div>" if remaining_points is not None else ""
+        member_info_html = f"""
+        <div class="dashed"></div>
+        <div style="font-size: 11.5px; background: #fff7ed; padding: 6px 8px; border-radius: 5px; border: 1px dashed #fdba74; margin-top: 4px;">
+            <div style="font-weight: bold; color: #c2410c;">💎 ข้อมูลสมาชิกสะสมแต้ม</div>
+            <div>ลูกค้า: <strong>{member_name or 'สมาชิก'}</strong> ({member_phone})</div>
+            {pts_used_txt}
+            <div>• ได้รับคะแนนบิลนี้: <strong style="color: #16a34a;">+{points_earned}</strong> แต้ม (ทุก 100บ. = 1 แต้ม)</div>
+            {rem_pts_txt}
+        </div>
+        """
+
+    # แถวส่วนลดในตาราง
+    discount_row_html = ""
+    if discount > 0:
+        discount_row_html = f"""
+        <tr style="color: #16a34a; font-weight: bold;">
+            <td>ส่วนลดจากคะแนน ({points_used} แต้ม):</td>
+            <td class="text-right">-฿{int(discount):,}</td>
+        </tr>
+        """
+
     html = f"""
     <!DOCTYPE html>
     <html lang="th">
@@ -740,7 +795,12 @@ def generate_receipt_html(order_id, table_id, items, total_price, order_time):
                 <td class="text-right bold">{total_qty} จาน</td>
             </tr>
             <tr>
-                <td>มูลค่าก่อนภาษี (Subtotal):</td>
+                <td>ยอดรวมสินค้า:</td>
+                <td class="text-right bold">฿{int(subtotal):,}</td>
+            </tr>
+            {discount_row_html}
+            <tr>
+                <td>มูลค่าก่อนภาษี:</td>
                 <td class="text-right">฿{before_vat:,.2f}</td>
             </tr>
             <tr>
@@ -748,10 +808,12 @@ def generate_receipt_html(order_id, table_id, items, total_price, order_time):
                 <td class="text-right">฿{vat_included:,.2f}</td>
             </tr>
             <tr style="font-size: 15px; font-weight: bold; color: #c2410c;">
-                <td style="padding-top: 5px;">ยอดชำระสุทธิ (TOTAL):</td>
+                <td style="padding-top: 5px;">ยอดจ่ายจริง (TOTAL):</td>
                 <td class="text-right" style="padding-top: 5px;">฿{int(total_price):,}</td>
             </tr>
         </table>
+        
+        {member_info_html}
         
         {qr_payment_html}
         
@@ -769,16 +831,37 @@ def generate_receipt_html(order_id, table_id, items, total_price, order_time):
 
 def render_receipt_box(oid, conn):
     c = conn.cursor()
-    c.execute("SELECT table_id, total_price, created_at, status FROM orders WHERE id = ?", (oid,))
+    c.execute("""
+        SELECT table_id, total_price, created_at, status,
+               COALESCE(subtotal, total_price), COALESCE(discount, 0),
+               COALESCE(points_used, 0), COALESCE(points_earned, 0),
+               member_phone
+        FROM orders WHERE id = ?
+    """, (oid,))
     row = c.fetchone()
     if not row:
         st.session_state['active_receipt_oid'] = None
         return
-    t_id, total, otime, st_code = row
+    t_id, total, otime, st_code, subtotal, discount, pts_used, pts_earned, m_phone = row
     c.execute("SELECT item_name, quantity, price FROM order_items WHERE order_id = ?", (oid,))
     items = c.fetchall()
     
-    receipt_html = generate_receipt_html(oid, t_id, items, total, otime)
+    m_name = None
+    rem_pts = None
+    if m_phone:
+        c.execute("SELECT first_name, last_name, points FROM members WHERE phone = ?", (m_phone,))
+        m_row = c.fetchone()
+        if m_row:
+            m_name = f"{m_row[0]} {m_row[1]}"
+            rem_pts = m_row[2]
+
+    receipt_html = generate_receipt_html(
+        oid, t_id, items, total, otime,
+        subtotal=subtotal, discount=discount,
+        points_used=pts_used, points_earned=pts_earned,
+        member_phone=m_phone, member_name=m_name,
+        remaining_points=rem_pts
+    )
     
     with st.container(border=True):
         st.markdown(f"### 🧾 ใบเสร็จรับเงินอย่างย่อ — โต๊ะที่ {t_id} (บิล #{oid})")
@@ -786,6 +869,31 @@ def render_receipt_box(oid, conn):
         
         components.html(receipt_html, height=750, scrolling=True)
         
+        # ส่วนแสดง/ผูกข้อมูลสมาชิกที่เคาน์เตอร์คิดเงิน
+        if st_code != 'paid':
+            if m_phone:
+                st.info(f"💎 สมาชิก: **{m_name}** ({m_phone}) | ใช้แลกส่วนลด: **{pts_used}** แต้ม (-฿{int(discount):,}) | ได้รับแต้มบิลนี้: **+{pts_earned}** แต้ม")
+            else:
+                with st.expander("💎 เพิ่มสมาชิกสะสมแต้มสำหรับบิลนี้ (ที่เคาน์เตอร์)", expanded=False):
+                    c_ph_in, c_ph_btn = st.columns([3, 1.2])
+                    with c_ph_in:
+                        attach_phone = st.text_input("เบอร์โทรศัพท์ลูกค้า:", key=f"attach_ph_input_{oid}", placeholder="เช่น 0937734851")
+                    with c_ph_btn:
+                        st.write("")
+                        attach_btn = st.button("🔗 บันทึกเบอร์", key=f"btn_attach_ph_{oid}", use_container_width=True)
+                    if attach_btn and attach_phone.strip():
+                        cl_ph = attach_phone.strip().replace("-", "").replace(" ", "")
+                        c.execute("SELECT id, first_name, last_name, points FROM members WHERE phone = ?", (cl_ph,))
+                        m_f = c.fetchone()
+                        if m_f:
+                            pts_to_earn = int(total // 100)
+                            c.execute("UPDATE orders SET member_phone = ?, points_earned = ? WHERE id = ?", (cl_ph, pts_to_earn, oid))
+                            conn.commit()
+                            st.success(f"ผูกสมาชิก คุณ {m_f[1]} {m_f[2]} (แต้มปัจจุบัน: {m_f[3]}) สำเร็จ!")
+                            st.rerun()
+                        else:
+                            st.warning("ไม่พบเบอร์นี้ในระบบสมาชิกค่ะ สามารถสมัครสมาชิกใหม่ได้ที่แท็บ '👥 ประวัติลูกค้า' นะคะ")
+
         rc1, rc2, rc3 = st.columns([1.5, 1.5, 1])
         with rc1:
             st.download_button(
@@ -800,6 +908,10 @@ def render_receipt_box(oid, conn):
             if st_code != 'paid':
                 if st.button("💵 ยืนยันรับเงิน (ปิดบิล)", key=f"pay_confirm_btn_{oid}", type="primary", use_container_width=True):
                     c.execute("UPDATE orders SET status = 'paid' WHERE id = ?", (oid,))
+                    # อัปเดตคะแนนสะสมของสมาชิก
+                    if m_phone:
+                        net_pts_change = pts_earned - pts_used
+                        c.execute("UPDATE members SET points = MAX(0, points + ?) WHERE phone = ?", (net_pts_change, m_phone))
                     conn.commit()
                     st.session_state['active_receipt_oid'] = None
                     st.toast(f"ปิดบิลโต๊ะ {t_id} เรียบร้อยแล้วค่ะ!", icon="✅")
@@ -1051,11 +1163,12 @@ if is_admin_mode:
 
     st.write("---")
 
-    # แยก 3 แท็บสำหรับจัดการหลังร้าน
-    tab_tbl, tab_pos, tab_rep = st.tabs([
+    # แยก 4 แท็บสำหรับจัดการหลังร้าน
+    tab_tbl, tab_pos, tab_rep, tab_mem = st.tabs([
         "🪑 จัดการโต๊ะอาหาร & เคลียร์โต๊ะ", 
         "🍳 จอครัว & เคาน์เตอร์คิดเงิน", 
-        "🏆 เมนูขายดี"
+        "🏆 เมนูขายดี",
+        "👥 ประวัติลูกค้า"
     ])
 
 
@@ -1344,6 +1457,118 @@ if is_admin_mode:
                             st.caption(f"ยอดรวม: ฿{int(csales):,}")
         conn_bs.close()
 
+    # --------------------------------------------------------------------------
+    # แท็บที่ 4: 👥 ประวัติลูกค้า (Customer History & Loyalty Members)
+    # --------------------------------------------------------------------------
+    with tab_mem:
+        st.subheader("👥 ประวัติลูกค้า & ระบบสมาชิกสะสมแต้ม")
+        st.caption("ดูข้อมูลสมาชิก จัดการคะแนนสะสม เรียงลำดับจากคะแนนมากไปน้อย และสมัครสมาชิกใหม่หน้าร้าน")
+        
+        conn_mem = sqlite3.connect(DB_NAME)
+        c_mem = conn_mem.cursor()
+
+        # ฟอร์มสมัครสมาชิกลูกค้าใหม่ (ที่เคาน์เตอร์)
+        with st.expander("➕ สมัครสมาชิกลูกค้าใหม่ (ที่เคาน์เตอร์)", expanded=False):
+            st.markdown("##### กรอกข้อมูลสมาชิกลูกค้า")
+            st.caption("ข้อมูลที่ใช้: ชื่อ, นามสกุล และหมายเลขโทรศัพท์")
+            mf_c1, mf_c2, mf_c3 = st.columns(3)
+            with mf_c1:
+                adm_fname = st.text_input("ชื่อ:", key="adm_reg_fname", placeholder="ชื่อจริง")
+            with mf_c2:
+                adm_lname = st.text_input("นามสกุล:", key="adm_reg_lname", placeholder="นามสกุล")
+            with mf_c3:
+                adm_phone = st.text_input("หมายเลขโทรศัพท์:", key="adm_reg_phone", placeholder="เช่น 0937734851")
+                
+            if st.button("➕ บันทึกข้อมูลสมาชิก", key="btn_adm_save_member", type="primary", use_container_width=True):
+                cl_adm_ph = adm_phone.strip().replace("-", "").replace(" ", "")
+                if not adm_fname.strip() or not adm_lname.strip() or not cl_adm_ph:
+                    st.error("กรุณากรอกข้อมูล ชื่อ นามสกุล และหมายเลขโทรศัพท์ให้ครบถ้วนค่ะ")
+                else:
+                    c_mem.execute("SELECT id FROM members WHERE phone = ?", (cl_adm_ph,))
+                    if c_mem.fetchone():
+                        st.error(f"หมายเลขโทรศัพท์ {cl_adm_ph} มีอยู่ในระบบสมาชิกแล้วค่ะ")
+                    else:
+                        reg_now = get_thai_now().strftime('%Y-%m-%d %H:%M:%S')
+                        c_mem.execute(
+                            "INSERT INTO members (first_name, last_name, phone, points, created_at) VALUES (?, ?, ?, 0, ?)",
+                            (adm_fname.strip(), adm_lname.strip(), cl_adm_ph, reg_now)
+                        )
+                        conn_mem.commit()
+                        st.success(f"บันทึกสมาชิก 'คุณ {adm_fname} {adm_lname}' เรียบร้อยแล้วค่ะ! 🎉")
+                        st.rerun()
+
+        st.write("---")
+
+        # ช่องค้นหาลูกค้า
+        search_kw = st.text_input("🔍 ค้นหาลูกค้า (ชื่อ, นามสกุล หรือ เบอร์โทรศัพท์):", placeholder="พิมพ์คำค้นหา...", key="mem_search_input")
+        kw_pattern = f"%{search_kw.strip()}%"
+
+        # ดึงรายชื่อลูกค้า เรียงตามคะแนนสะสมจากมากไปน้อย (ORDER BY points DESC)
+        c_mem.execute("""
+            SELECT 
+                m.id, 
+                m.first_name, 
+                m.last_name, 
+                m.phone, 
+                m.points, 
+                m.created_at,
+                COUNT(DISTINCT CASE WHEN o.status = 'paid' THEN o.id END) as paid_orders,
+                COALESCE(SUM(CASE WHEN o.status = 'paid' THEN o.total_price ELSE 0 END), 0) as total_spent
+            FROM members m
+            LEFT JOIN orders o ON m.phone = o.member_phone
+            WHERE (m.first_name LIKE ? OR m.last_name LIKE ? OR m.phone LIKE ?)
+            GROUP BY m.id
+            ORDER BY m.points DESC, total_spent DESC, m.id ASC
+        """, (kw_pattern, kw_pattern, kw_pattern))
+        members_list = c_mem.fetchall()
+
+        # สถิติภาพรวมสมาชิก
+        c_mem.execute("SELECT COUNT(*), COALESCE(SUM(points), 0) FROM members")
+        tot_m_cnt, tot_pts_sum = c_mem.fetchone()
+
+        sm1, sm2, sm3 = st.columns(3)
+        sm1.metric("👥 สมาชิกทั้งหมด", f"{tot_m_cnt} คน")
+        sm2.metric("⭐ คะแนนสะสมรวมทั้งระบบ", f"{tot_pts_sum:,} แต้ม")
+        top_member_txt = f"{members_list[0][1]} {members_list[0][2]} ({members_list[0][4]} แต้ม)" if members_list else "-"
+        sm3.metric("🥇 แชมป์แต้มสูงสุด", top_member_txt)
+
+        st.markdown(f"### 📋 รายชื่อสมาชิกลูกค้า (เรียงตามคะแนนสะสมมากที่สุด)")
+        st.caption("กฎคะแนน: ทุก ๆ 100 บาท (ยอดสุทธิ) ได้รับ 1 คะแนน | 10 คะแนน แลกส่วนลด 25 บาท")
+
+        if not members_list:
+            if search_kw:
+                st.warning(f"ไม่พบข้อมูลสมาชิกที่ตรงกับคำค้นหา '{search_kw}'")
+            else:
+                st.info("ขณะนี้ยังไม่มีข้อมูลสมาชิกลูกค้าในระบบ สามารถกด **'➕ สมัครสมาชิกลูกค้าใหม่'** ด้านบนได้เลยค่ะ")
+        else:
+            for idx, (mid, fname, lname, phone, pts, reg_date, order_cnt, spent) in enumerate(members_list, 1):
+                # ตราอันดับคะแนน
+                if idx == 1:
+                    badge = "🥇 อันดับ 1"
+                elif idx == 2:
+                    badge = "🥈 อันดับ 2"
+                elif idx == 3:
+                    badge = "🥉 อันดับ 3"
+                else:
+                    badge = f"#{idx}"
+
+                with st.container(border=True):
+                    mc1, mc2, mc3, mc4 = st.columns([1.2, 3.5, 2.5, 2.5])
+                    with mc1:
+                        st.markdown(f"<div style='font-size: 1.15rem; font-weight: 700; color: #ea580c; text-align: center; line-height: 40px;'>{badge}</div>", unsafe_allow_html=True)
+                    with mc2:
+                        st.markdown(f"**คุณ{fname} {lname}**")
+                        st.caption(f"📞 เบอร์โทร: **{phone}** • สมัครเมื่อ: {reg_date[:10] if reg_date else '-'}")
+                    with mc3:
+                        st.markdown(f"⭐ คะแนนสะสม: <span style='font-size: 1.25rem; font-weight: 800; color: #ea580c;'>{pts:,}</span> แต้ม", unsafe_allow_html=True)
+                        discount_avail = (pts // 10) * 25
+                        st.caption(f"แลกส่วนลดได้สูงสุด: **฿{discount_avail:,}**")
+                    with mc4:
+                        st.markdown(f"🍽️ มาทาน: **{order_cnt} ครั้ง**")
+                        st.caption(f"ยอดซื้อสะสม: **฿{int(spent):,}**")
+
+        conn_mem.close()
+
     # Footer ล่างสุดสำหรับหน้าระบบจัดการหลังร้าน (?mode=admin)
     render_app_footer()
 
@@ -1429,6 +1654,93 @@ else:
     '''
     st.markdown(header_html, unsafe_allow_html=True)
     st.write("---")
+
+    # ==========================================================================
+    # 💎 ระบบสมาชิกสะสมแต้ม (ไม่บังคับ)
+    # ==========================================================================
+    mem_tbl_key = f"member_phone_table_{current_table_num}"
+    cust_phone_val = st.session_state.get(mem_tbl_key, "")
+
+    with st.container(border=True):
+        st.markdown("#### 💎 สมาชิกสะสมแต้ม (ไม่บังคับ)")
+        st.caption("กรอกเบอร์โทรศัพท์เพื่อสะสมแต้ม (ทุก 100 บาทสุทธิ = 1 คะแนน) และแลกส่วนลด (10 คะแนน = 25 บาท)")
+        
+        c_mph_in, c_mph_btn = st.columns([3, 1.2])
+        with c_mph_in:
+            in_phone = st.text_input(
+                "หมายเลขโทรศัพท์:", 
+                value=cust_phone_val, 
+                placeholder="เช่น 0937734851 (ไม่บังคับ)", 
+                key=f"input_cust_phone_{current_table_num}"
+            )
+        with c_mph_btn:
+            st.write("")
+            btn_chk_mem = st.button("🔍 ตรวจสอบ", key=f"btn_chk_mem_{current_table_num}", use_container_width=True)
+
+        cl_phone = in_phone.strip().replace("-", "").replace(" ", "")
+        
+        current_member_data = None
+        if cl_phone:
+            conn_m = sqlite3.connect(DB_NAME)
+            c_m = conn_m.cursor()
+            c_m.execute("SELECT id, first_name, last_name, phone, points FROM members WHERE phone = ?", (cl_phone,))
+            m_row = c_m.fetchone()
+            if m_row:
+                current_member_data = {
+                    'id': m_row[0],
+                    'first_name': m_row[1],
+                    'last_name': m_row[2],
+                    'phone': m_row[3],
+                    'points': m_row[4]
+                }
+                st.session_state[mem_tbl_key] = cl_phone
+                st.session_state[f'member_obj_{current_table_num}'] = current_member_data
+                
+                st.success(f"👤 ยินดีต้อนรับ **คุณ{m_row[1]} {m_row[2]}** | ⭐ แต้มสะสมปัจจุบัน: **{m_row[4]:,}** คะแนน")
+                if m_row[4] >= 10:
+                    max_d = (m_row[4] // 10) * 25
+                    st.caption(f"🎁 คุณมีสิทธิ์ใช้คะแนนแลกส่วนลดได้สูงสุด **฿{max_d:,}** (ชุดละ 10 คะแนน = 25 บาท เลือกใช้ได้ในตะกร้าอาหารค่ะ)")
+                else:
+                    st.caption(f"💡 สะสมเพิ่มอีก **{10 - m_row[4]}** คะแนน เพื่อแลกรับส่วนลด 25 บาทค่ะ")
+            else:
+                st.info(f"ℹ️ ยังไม่พบเบอร์ `{cl_phone}` ในระบบสมาชิก สมัครสมาชิกฟรีเพื่อเริ่มสะสมแต้มได้เลยค่ะ ✨")
+                with st.expander("📝 สมัครสมาชิกใหม่ทันที (ง่ายๆ แค่กรอกชื่อ-นามสกุล)", expanded=True):
+                    reg_c1, reg_c2 = st.columns(2)
+                    with reg_c1:
+                        reg_fname = st.text_input("ชื่อ:", key=f"reg_fname_t_{current_table_num}", placeholder="ระบุชื่อจริง")
+                    with reg_c2:
+                        reg_lname = st.text_input("นามสกุล:", key=f"reg_lname_t_{current_table_num}", placeholder="ระบุนามสกุล")
+                        
+                    if st.button("✨ ยืนยันสมัครสมาชิก", key=f"btn_reg_mem_t_{current_table_num}", type="primary", use_container_width=True):
+                        if not reg_fname.strip() or not reg_lname.strip():
+                            st.error("กรุณากรอกชื่อและนามสกุลให้ครบถ้วนค่ะ")
+                        else:
+                            try:
+                                reg_time = get_thai_now().strftime('%Y-%m-%d %H:%M:%S')
+                                c_m.execute(
+                                    "INSERT INTO members (first_name, last_name, phone, points, created_at) VALUES (?, ?, ?, 0, ?)",
+                                    (reg_fname.strip(), reg_lname.strip(), cl_phone, reg_time)
+                                )
+                                conn_m.commit()
+                                current_member_data = {
+                                    'id': c_m.lastrowid,
+                                    'first_name': reg_fname.strip(),
+                                    'last_name': reg_lname.strip(),
+                                    'phone': cl_phone,
+                                    'points': 0
+                                }
+                                st.session_state[mem_tbl_key] = cl_phone
+                                st.session_state[f'member_obj_{current_table_num}'] = current_member_data
+                                st.success(f"🎉 สมัครสมาชิกสำเร็จ! ยินดีต้อนรับคุณ {reg_fname} {reg_lname} เริ่มสะสมแต้มได้ทันทีค่ะ")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"เกิดข้อผิดพลาด: {e}")
+            conn_m.close()
+        else:
+            st.session_state[mem_tbl_key] = ""
+            st.session_state[f'member_obj_{current_table_num}'] = None
+
+    current_member = st.session_state.get(f'member_obj_{current_table_num}')
 
     # ==========================================================================
     # 🛒 ฟังก์ชันจัดการตะกร้าสินค้า (Cart Callbacks)
@@ -1539,10 +1851,55 @@ else:
                         st.session_state.cart[item_name]['note'] = note
                         st.write("---")
                 
-                st.markdown(f"#### ยอดรวมทั้งสิ้น: <span style='color: #ea580c;'>฿{int(total_cart_sum):,}</span>", unsafe_allow_html=True)
+                discount_val = 0
+                points_used_val = 0
+                
+                if current_member:
+                    m_pts = current_member['points']
+                    # กฎ:
+                    # 1. ทุก ๆ 10 คะแนน สามารถแลกเป็นส่วนลด 25 บาท
+                    # 2. ผู้ใช้ต้องแลกเป็นจำนวนชุดของ 10 คะแนนเท่านั้น (10, 20, 30...)
+                    # 3. ส่วนลดที่ได้รับต้องไม่เกินยอดราคาที่ต้องชำระจริง
+                    max_sets_by_pts = m_pts // 10
+                    max_sets_by_bill = int(total_cart_sum // 25)
+                    max_sets = min(max_sets_by_pts, max_sets_by_bill)
+                    
+                    if max_sets >= 1:
+                        st.markdown("---")
+                        st.markdown("##### 🎁 ใช้คะแนนสะสมแลกส่วนลด")
+                        st.caption(f"แต้มสะสมที่คุณมี: **{m_pts:,}** คะแนน (แลกได้ชุดละ 10 คะแนน = 25 บาท)")
+                        
+                        redeem_options = [s * 10 for s in range(max_sets + 1)]
+                        sel_pts_to_use = st.selectbox(
+                            "เลือกจำนวนคะแนนที่ต้องการใช้แลกส่วนลด:",
+                            options=redeem_options,
+                            format_func=lambda x: "ไม่ใช้คะแนน" if x == 0 else f"ใช้ {x} คะแนน (ส่วนลด ฿{(x // 10) * 25:,})",
+                            key=f"sel_redeem_pts_{current_table_num}"
+                        )
+                        points_used_val = sel_pts_to_use
+                        discount_val = (sel_pts_to_use // 10) * 25
+                    elif m_pts > 0:
+                        st.caption(f"⭐ คุณมีคะแนนสะสม **{m_pts}** คะแนน (สะสมครบ 10 คะแนนเพื่อแลกส่วนลด 25 บาท)")
+                
+                net_cart_sum = max(0, total_cart_sum - discount_val)
+                points_to_earn = int(net_cart_sum // 100)
+                
+                st.write("---")
+                st.markdown(f"**ยอดรวมสินค้า:** ฿{int(total_cart_sum):,}")
+                if discount_val > 0:
+                    st.markdown(f"**ส่วนลดจากคะแนน ({points_used_val} แต้ม):** :green[-฿{int(discount_val):,}]")
+                st.markdown(f"#### ยอดชำระสุทธิ: <span style='color: #ea580c;'>฿{int(net_cart_sum):,}</span>", unsafe_allow_html=True)
+                
+                if current_member:
+                    st.caption(f"✨ เมื่อชำระบิลนี้ คุณจะได้รับแต้มสะสมเพิ่ม: **+{points_to_earn}** คะแนน (ทุก 100 บาท = 1 คะแนน)")
+                
                 if st.button("🚀 ยืนยันส่งออเดอร์เข้าครัว", type="primary", use_container_width=True):
                     order_time_th = get_thai_now().strftime('%Y-%m-%d %H:%M:%S')
-                    c.execute("INSERT INTO orders (table_id, status, total_price, created_at) VALUES (?, 'pending', ?, ?)", (current_table_num, total_cart_sum, order_time_th))
+                    m_phone_to_save = current_member['phone'] if current_member else None
+                    c.execute("""
+                        INSERT INTO orders (table_id, status, subtotal, discount, total_price, points_used, points_earned, member_phone, created_at) 
+                        VALUES (?, 'pending', ?, ?, ?, ?, ?, ?, ?)
+                    """, (current_table_num, total_cart_sum, discount_val, net_cart_sum, points_used_val, points_to_earn, m_phone_to_save, order_time_th))
                     new_order_id = c.lastrowid
                     for iname, idata in st.session_state.cart.items():
                         c.execute("INSERT INTO order_items (order_id, item_name, price, quantity, note, status) VALUES (?, ?, ?, ?, ?, 'pending')", (new_order_id, iname, idata['price'], idata['qty'], idata['note']))
